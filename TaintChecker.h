@@ -282,10 +282,11 @@ struct AchlysTaintChecker : public ModulePass {
   // Functions like file.read(), istream.*, read(), aio_read(), fread() syscall.
   bool isTaintSourceFunction(Function &F) {
 
-    string funcName = F.getName().str();
+    string funcName = demangle(F.getName().str().c_str());
 
-    if (funcName == "fread" || funcName == "istream" || funcName == "read" ||
-        funcName == "aio_read")
+
+    if (funcName == "fread" || funcName.find("istream") != string::npos ||
+        funcName == "read" || funcName == "aio_read")
         return true;
 
     return false;

@@ -175,6 +175,8 @@ namespace achlys {
         // is tainted.
         else if (isTaintSourceFunction(*callee)) {
 
+          dprintf(1, "[New Info] Found new Taint source: ",
+                      demangle(callee->getName().str().c_str()).c_str(), "\n");
           fc->checkAndPropagateTaint(ci, {});
         }
         else {
@@ -237,6 +239,8 @@ namespace achlys {
 
         if (fc.numArgTainted[idxCounter] == argCounter) {
           taintSet.checkAndPropagateTaint(arg);
+          dprintf(1, "[New Info] Found tainted argument ",
+                  llvmToString(arg).c_str(), "\n");
 
           // Remove the argument form the set.
           idxCounter++;

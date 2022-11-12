@@ -121,8 +121,22 @@ struct FunctionTaintSet {
   // Values that are both tainted and NaNs.
   set<Value*> taintedNans;
 
+  pair<bool, vector<Instruction*>> isReturnValueTainted;
+
   // Has the FunctionTaintSet changed!
   bool hasChanged;
+
+  // Mark the 'val' as return value of this function.
+  void markThisValueAsReturnValue(Value* val) {
+
+    if (taintSet.find(val) != taintSet.end()) {
+      isReturnValueTainted.first = true;
+      isReturnValueTainted.second = taintSet[val];
+    }
+    else {
+      isReturnValueTainted.first = false;
+    }
+  }
 
   // Check is any value from dependVals is tainted, if so, add valueToBeTainted
   // to the taint set.
@@ -176,6 +190,12 @@ struct FunctionTaintSet {
 
   bool isTainted(Value* val) {
     return taintSet.find(val) != taintSet.end();
+  }
+
+  bool isUnconditionalTainted(Value * val) {
+
+    return (taintSet.find(val) != taintSet.end() &&
+            taintSet[val].size() == 0);
   }
 
   bool isNanValue(Value* val) {
@@ -247,7 +267,8 @@ struct AchlysTaintChecker : public ModulePass {
   bool isConstantInstruction(int opcode, Value* operand1, Value* operand2) {
 
     if (opcode == Instruction::Sub || opcode == Instruction::FSub ||
-        opcode == Instruction::Xor || opcode == Instruction::FDiv) {
+        opcode == Instruction::Xor || opcode == Instruction::FDiv ||
+        opcode == Instruction::SDiv) {
 
           // If the operands are equal or aliases.
           if (operand1 == operand2 || aliasAnalysisResult->isMustAlias(operand1,

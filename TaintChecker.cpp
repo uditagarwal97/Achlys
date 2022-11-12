@@ -53,8 +53,6 @@ namespace achlys {
 
   // Analyze each instruction one by one. Essentially, this function will apply
   // taint propogation and eviction policies on each instruction.
-  // TODO:
-  //     - Handle alloca, unary, cast, call.
   void AchlysTaintChecker::analyzeInstruction(Instruction* i,
                           FunctionTaintSet* fc, FunctionContext fcxt) {
 
@@ -121,8 +119,9 @@ namespace achlys {
 
       // Check for NaN sources.
       // Instructions like a / b can produce NaN is a and b both are tainted.
-      if (opcode == Instruction::FDiv && fc->isTainted(secondOperand) &&
-          fc->isTainted(firstOperand)) {
+      if ((opcode == Instruction::SDiv || opcode == Instruction::FDiv) &&
+            fc->isUnconditionalTainted(secondOperand) &&
+          fc->isUnconditionalTainted(firstOperand)) {
 
           fc->addNaNSource(bo);
           fc->checkAndPropagateTaint(bo, {secondOperand, firstOperand});
@@ -202,6 +201,18 @@ namespace achlys {
         }
       }
     }
+
+    // Hanlde return instruction.
+    else if (auto ri = dyn_cast<ReturnInst>(i)) {
+
+      if (!ri->getParent()->getParent()->getReturnType()->isVoidTy()) {
+
+        Value *vl = ri->getOperand(0);
+        fc->checkAndPropagateTaint(ri, {vl});
+      }
+
+      fc->markThisValueAsReturnValue(ri);
+    }
     else {
       dprintf(3, "\033[0;31m [WARNING] Unhandled Instruction: ",llvmToString(i).c_str(),
               " \033[0m\n");
@@ -264,6 +275,13 @@ namespace achlys {
     if (taintSet.hasChanged) {
       dprintf(1, "[DEBUG] TaintSet of this function has changed. Back track and \
               reanalyze the callers if the return value is tainted\n");
+
+      if ((!F->getReturnType()->isVoidTy()) &&
+          taintSet.isReturnValueTainted.first) {
+
+        dprintf(1, "[STEP] Return value of this function is tainted. \
+                    Backtracking to re-analyze the caller\n");
+      }
     }
 
     dprintf(1, "[STEP] Finished Analyzing function: ",

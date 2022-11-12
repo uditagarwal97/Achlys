@@ -23,37 +23,265 @@
 
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryDependenceAnalysis.h"
+#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/IR/IntrinsicInst.h"
+
+#include <cstdarg>
 
 using namespace llvm;
 using namespace std;
 
 #define __DEBUG__
+#define NARGS_SEQ(_1,_2,_3,_4,_5,_6,_7,_8,_9,N,...) N
+#define NARGS(...) NARGS_SEQ(__VA_ARGS__, 9, 8, 7, 6, 5, 4, 3, 2, 1)
+#define dprintf(a, ...) dprint(a, NARGS(__VA_ARGS__), __VA_ARGS__)
+
+// CLI command to specify verbose number for debug statements.
+static cl::opt<unsigned> Verbose("achlys-verbose", cl::init(0),
+                                   cl::desc("[Achlys Taint Analysis] Debug \
+                                              verbose value.\n\
+                                              0 --> No Debug\n\
+                                              1 --> Function Level Debug\n\
+                                              2 --> BasicBlock Level Debug\n\
+                                              3 --> Instruction Level Debug\n\
+                                              4 --> Real-Time Debug\n"));
 
 #include "TaintChecker.h"
 
 namespace achlys {
+
+  // Analyze each instruction one by one. Essentially, this function will apply
+  // taint propogation and eviction policies on each instruction.
+  // TODO:
+  //     - Handle alloca, unary, cast, call.
+  void AchlysTaintChecker::analyzeInstruction(Instruction* i,
+                          FunctionTaintSet* fc, FunctionContext fcxt) {
+
+    dprintf(3, "[STEP] Analyzing instruction: ",llvmToString(i).c_str(),"\n");
+
+    // Handle Store Instruction.
+    if (auto si = dyn_cast<StoreInst>(i)) {
+
+      // What are you storing?
+      auto valToStore = si->getOperand(0);
+      // Where are you storing?
+      auto storeLocation = si->getOperand(1);
+
+      // [Taint Propogation] If what you are storing is tainted, then mark the
+      // store location as tainted.
+      fc->checkAndPropagateTaint(storeLocation, {valToStore});
+
+      // [Taint Eviction] If you are storing an untainted value to a tainted
+      // location, then remove the taint of the location.
+      // FIXME: Should we remove taint if this operation is in some aggregate DS?
+      // For example, if you are storing an untainted val into a tainted array
+      // should we remove the taint of the entire array? Perhaps, No. Need to
+      // think more about the granularity at which we are tracking taints.
+      if (fc->isTainted(storeLocation) && !(fc->isTainted(valToStore))) {
+        fc->removeTaint(storeLocation);
+      }
+    }
+
+    // Handle Load Instruction.
+    else if (auto li = dyn_cast<LoadInst>(i)) {
+
+      // Where are you loading from?
+      auto loadLocation = li->getOperand(0);
+
+      // [Taint Propogation] If you are loading from a tainted location, mark
+      // loaded value as tainted as well.
+      fc->checkAndPropagateTaint(li, {loadLocation});
+    }
+
+    // Hanlde GetElementPointer (GEP) instruction. GEP is used for creating a
+    // pointer from a variable.
+    else if (auto gep = dyn_cast<GetElementPtrInst>(i)) {
+
+      auto val = gep->getPointerOperand();
+
+      // [Taint Propogation] If you are referencing a tainted variable, mark the
+      // resulting pointer as tainted as well.
+      fc->checkAndPropagateTaint(gep, {val});
+    }
+
+    // Hanlde Binary operator like add, sub, mul, div, fdiv, etc.
+    // Operation like div can produce NaNs as well, beware!
+    else if (auto bo = dyn_cast<BinaryOperator>(i)) {
+
+      auto firstOperand = bo->getOperand(0);
+      auto secondOperand = bo->getOperand(1);
+      auto opcode = bo->getOpcode();
+
+      if (!isConstantInstruction(opcode, firstOperand, secondOperand)) {
+        // [Taint Propogation] If any of the two operands is tainted, then the
+        // resulting value will also be tainted.
+        fc->checkAndPropagateTaint(bo, {firstOperand, secondOperand});
+      }
+
+      // Check for NaN sources.
+      // Instructions like a / b can produce NaN is a and b both are tainted.
+      if (opcode == Instruction::FDiv && fc->isTainted(secondOperand) &&
+          fc->isTainted(firstOperand)) {
+
+          fc->addNaNSource(bo);
+          fc->checkAndPropagateTaint(bo, {secondOperand, firstOperand});
+      }
+    }
+
+    // Handle variable cast or unary operators line not.
+    // Both these instruction types have just one operand.
+    // FIXME: Can integer cast to float result in a NaN? IDK.
+    else if (isa<CastInst>(i) || isa<UnaryOperator>(i)) {
+
+      auto firstOperand = i->getOperand(0);
+      fc->checkAndPropagateTaint(i, {firstOperand});
+    }
+
+    // Handle Call instruction.
+    else if (auto ci = dyn_cast<CallInst>(i)) {
+
+      // FIXME: Can we handle indirect function calls? For these, callee will be
+      // NULL.
+      if (Function* callee = ci->getCalledFunction()) {
+
+        size_t numArguments = callee->arg_size();
+
+        // If it is a user defined function, add it to the function worklist.
+        if (isUserDefinedFunction(*callee)) {
+
+          // Check which arguments of this call are tainted.
+          vector<int> argTainted;
+          for (size_t i = 0; i < numArguments; i++) {
+
+            auto arg = ci->getArgOperand(i);
+            if (fc->isTainted(arg))
+              argTainted.push_back(i+1);
+          }
+
+          funcWorklist.push({callee, {ci, ci->getParent()->getParent(),
+                            argTainted}});
+
+          // Check if this function returns some value. If yes, check if it could
+          // be tainted.
+          if (!callee->getReturnType()->isVoidTy()) {
+            fc->taintFunctionReturnValue(ci, ci);
+          }
+        }
+        // For third-party functions, we have to check if it is either a
+        // taint source, or a function that can induce NaN (like atof()).
+        // [Taint Popogation] If none of the above, we will assume that the
+        // return value of this function is tainted if any of the input argument
+        // is tainted.
+        else if (isTaintSourceFunction(*callee)) {
+
+          fc->checkAndPropagateTaint(ci, {});
+        }
+        else {
+
+          bool isArgTainted = false;
+          for (size_t i = 0; i < numArguments; i++) {
+
+            auto arg = ci->getArgOperand(i);
+            if (fc->isTainted(arg))
+              isArgTainted = true;
+          }
+
+          if (isNaNSourceFunction(*callee)) {
+            if (isArgTainted) {
+              fc->addNaNSource(ci);
+              fc->taintFunctionReturnValue(ci, {});
+            }
+          }
+          else {
+            if (isArgTainted)
+              fc->checkAndPropagateTaint(ci, {});
+          }
+        }
+      }
+    }
+    else {
+      dprintf(3, "\033[0;31m [WARNING] Unhandled Instruction: ",llvmToString(i).c_str(),
+              " \033[0m\n");
+    }
+
+    dprintf(3, "[STEP] Finish Analyzing instruction: ", llvmToString(i).c_str(), "\n");
+  }
 
   // Analyze each function one by one. We will use a lattice-based fixpoint
   // iterative, inter-procedural data flow analysis.
   // TODO:
   //    - Handle recursive function calls.
   //    - Handle pointers and data structures (Abstract memory model)
+  //    - Handle back-tracking and updating taint sets of caller functions.
   void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc) {
-    debug<<"Started Analyzing function: "<<F->getName().str().c_str()<<"\n";
-    debug<<"Finished Analyzing function: "<<F->getName().str().c_str()<<"\n";
+    dprintf(1, "Started Analyzing function: ", F->getName().str().c_str(), "\n");
+
+    FunctionTaintSet taintSet;
+    if (funcTaintSet.find(F) == funcTaintSet.end()) {
+      dprintf(1, "[STEP] Analysing this function for the first time\n");
+    }
+    else {
+      dprintf(1, "[STEP] Analysing this function again\n");
+      taintSet = funcTaintSet[F];
+      taintSet.snapshot(); // Just to check if the taint set changes or not.
+    }
+
+    // Add function parameters to taint set.
+    if (fc.numArgTainted[0] != 0){
+
+      int argCounter = 0, idxCounter = 0;
+      for (auto ii = F->arg_begin(); ii != F->arg_end(); ii++) {
+        auto arg = ii;
+        argCounter++;
+
+        if (fc.numArgTainted[idxCounter] == argCounter) {
+          taintSet.checkAndPropagateTaint(arg);
+
+          // Remove the argument form the set.
+          idxCounter++;
+        }
+      }
+    }
+
+    // Now, do the reverse post-order traversal of all the basic blocks of
+    // this function
+    for (BasicBlock *bb : llvm::ReversePostOrderTraversal<llvm::Function*>(F)) {
+      for (auto ii = bb->begin(); ii != bb->end(); ii++) {
+
+        Instruction* ins = &(*ii);
+        analyzeInstruction(ins, &taintSet, fc);
+      }
+    }
+
+    taintSet.summarize(1);
+
+    // FIXME: Complete this.
+    if (taintSet.hasChanged) {
+      dprintf(1, "[DEBUG] TaintSet of this function has changed. Back track and \
+              reanalyze the callers if the return value is tainted\n");
+    }
+
+    dprintf(1, "[STEP] Finished Analyzing function: ",
+                F->getName().str().c_str(), "\n");
   }
 
   // Entry point of this pass.
   bool AchlysTaintChecker::runOnModule(Module& M) {
 
-    debug<<"---------------Starting taint analysis pass-------------------\n";
+    dprintf(1,
+          "---------------Starting taint analysis pass-------------------\n");
 
     // Iterate through all function in the program and find the main() function.
     for (Function &F : M) {
 
       if (isUserDefinedFunction(F) && F.getName().str().compare("main") == 0) {
+
+        //AAResultsWrapperPass a;
+        //a.runOnFunction(F);
+        //aliasAnalysisResult = &(a.getAAResults());
+        // Init results from alias analysis pass for this function.
+        aliasAnalysisResult = &(getAnalysis<AAResultsWrapperPass>(F).getAAResults());
 
         // main() function takes 2 arguments or none
         if (F.arg_size() == 0) {
@@ -85,7 +313,8 @@ namespace achlys {
         funcWorklist.pop();
 
         analyzeFunction(F, fc);
-        errs()<<"funcWorklist size="<<funcWorklist.size()<<"\n";
+        dprintf(1, "funcWorklist size=", to_string(funcWorklist.size()).c_str(),
+               "\n");
       }
     }
 
@@ -95,13 +324,13 @@ namespace achlys {
 
   // Our taint analysis pass depends on these LLVM passes.
   void AchlysTaintChecker::getAnalysisUsage(AnalysisUsage &AU) const {
+    AU.setPreservesAll();
     AU.addRequired<AAResultsWrapperPass>();
     AU.addRequired<MemoryDependenceWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
-    AU.setPreservesAll();
   }
 } // namespace
 
 char achlys::AchlysTaintChecker::ID = 0;
 static RegisterPass<achlys::AchlysTaintChecker> X("taintanalysis",
-                                   "Pass to find tainted variables");
+                                   "Pass to find tainted variables", false, true);

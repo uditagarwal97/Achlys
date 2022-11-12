@@ -1,1 +1,3 @@
 *.ll
+build/
+llvm-project-*

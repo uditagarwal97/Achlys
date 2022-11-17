@@ -27,36 +27,36 @@ raw_string_ostream output(output_str);
 namespace achlys {
 //////////////////////////// Supporting Functions //////////////////////////////
 
-  // Printf with custom verbose levels.
-  void dprint(unsigned v, int numArgs, ...) {
+// Printf with custom verbose levels.
+void dprint(unsigned v, int numArgs, ...) {
 
-    va_list vl;
-    va_start(vl, numArgs);
-    for (int i = 0; i < numArgs; i++) {
-      if (Verbose == 4) {
-        errs()<<va_arg(vl, char*);
-      }
-      else if (v <= Verbose) {
-        debug<<va_arg(vl, char*);
-      }
+  va_list vl;
+  va_start(vl, numArgs);
+  for (int i = 0; i < numArgs; i++) {
+    if (Verbose == 4) {
+      errs()<<va_arg(vl, char*);
     }
-    va_end(vl);
+    else if (v <= Verbose) {
+      debug<<va_arg(vl, char*);
+    }
   }
+  va_end(vl);
+}
 
-  // Convert any LLVM op=bject to C string.
-  // Useful for console printing.
-  template<typename T>
-  string llvmToString(T *val) {
+// Convert any LLVM op=bject to C string.
+// Useful for console printing.
+template<typename T>
+string llvmToString(T *val) {
 
-    std::string temp;
-    raw_string_ostream temp_ostream(temp);
+  std::string temp;
+  raw_string_ostream temp_ostream(temp);
 
-    temp_ostream << *val;
+  temp_ostream << *val;
 
-    string tempVar;
-    tempVar.append(temp_ostream.str());
-    return tempVar;
-  }
+  string tempVar;
+  tempVar.append(temp_ostream.str());
+  return tempVar;
+}
 
 // Demangles the function name.
 std::string demangle(const char *name) {
@@ -81,6 +81,208 @@ int getSourceCodeLine(Instruction *I) {
 }
 
 /////////////////////////// Supporting Data Structures /////////////////////////
+
+// Structure of dependency graph node.
+// Dependency graph is a directed, 2-level graph, with the top nodes being
+// either the base pointers or tainted function arguments. The bottom nodes are
+// the tainted variables or pointers that depends on the top nodes.
+struct TaintDepGraphNode {
+  Value *val;
+  enum NodeType {DEF_TAINT_SOURCE, POS_TAINT_SOURCE, POS_TAINT_VAR} type;
+
+  // Debug attributes for this node.
+  struct attributes {
+    bool isReturnCallNode;
+    bool isArgumentNode;
+    bool isReturnValue;
+    vector<Value*> callNodeArgs;
+
+    attributes() {
+      isReturnCallNode = false;
+      isArgumentNode = false;
+      isReturnValue = false;
+    }
+  } attr;
+
+  // For storing child or parent.
+  std::vector<TaintDepGraphNode *> children;
+
+  TaintDepGraphNode(Value *v) : val(v) {}
+};
+
+// Structure of taint summary graph.
+struct TaintDepGraph {
+  std::vector<TaintDepGraphNode *> topLevelNodes;
+  std::vector<TaintDepGraphNode *> bottomLevelNodes;
+  std::unordered_map<Value*, TaintDepGraphNode *> valToNodeMap;
+
+  Function *F;
+
+  TaintDepGraph(Function *_F) : F{_F} {}
+
+  void addTopLevelNode(TaintDepGraphNode *node) {
+    topLevelNodes.push_back(node);
+  }
+
+  void addBottomLevelNode(TaintDepGraphNode *node) {
+    bottomLevelNodes.push_back(node);
+  }
+
+  void addFunctionArgument(Value* v) {
+    TaintDepGraphNode *node = new TaintDepGraphNode(v);
+    node->attr.isArgumentNode = true;
+    node->type = TaintDepGraphNode::NodeType::POS_TAINT_SOURCE;
+    valToNodeMap.insert({v, node});
+
+    addTopLevelNode(node);
+  }
+
+  // Add valToBeTainted to the graph, if atleast one of the value in dependsVals
+  // is tainted.
+  void checkAndPropogateTaint(Value* valToBeTainted, vector<Value*> dependVals){
+
+    bool isTainted = false;
+    vector<Value*> taintDepSet;
+
+    for (Value* v : dependVals) {
+      if (valToNodeMap.find(v) != valToNodeMap.end()) {
+        isTainted = true;
+        taintDepSet.push_back(v);
+      }
+    }
+
+    // Add the new node to the graph.
+    if (isTainted) {
+      TaintDepGraphNode *node = new TaintDepGraphNode(valToBeTainted);
+      node->type = TaintDepGraphNode::NodeType::POS_TAINT_VAR;
+      valToNodeMap.insert({valToBeTainted, node});
+
+      addBottomLevelNode(node);
+
+      for (Value* v : taintDepSet) {
+        TaintDepGraphNode *vNode = valToNodeMap[v];
+
+        // If it is a top-level node.
+        if (vNode->type == TaintDepGraphNode::NodeType::POS_TAINT_SOURCE ||
+            vNode->type == TaintDepGraphNode::NodeType::DEF_TAINT_SOURCE) {
+          vNode->children.push_back(node);
+          node->children.push_back(vNode);
+        }
+        else {
+          // If it is a bottom-level node.
+          for (TaintDepGraphNode *parent : vNode->children) {
+            parent->children.push_back(node);
+            node->children.push_back(parent);
+          }
+        }
+      }
+    }
+  }
+
+  // remove v from the graph.
+  void removeTaint(Value* v) {
+
+    if (valToNodeMap.find(v) != valToNodeMap.end()) {
+      TaintDepGraphNode *node = valToNodeMap[v];
+
+      // Remove the node from the bottom level nodes.
+      for (auto it = bottomLevelNodes.begin(); it != bottomLevelNodes.end();
+           it++) {
+        if (*it == node) {
+          bottomLevelNodes.erase(it);
+          break;
+        }
+      }
+
+      // Remove the node from the top level nodes.
+      for (auto it = topLevelNodes.begin(); it != topLevelNodes.end(); it++) {
+        if (*it == node) {
+          topLevelNodes.erase(it);
+          break;
+        }
+      }
+
+      // Remove the node from the children of its parents.
+      for (TaintDepGraphNode *parent : node->children) {
+        for (auto it = parent->children.begin(); it != parent->children.end();
+             it++) {
+          if (*it == node) {
+            parent->children.erase(it);
+            break;
+          }
+        }
+      }
+
+      // Remove the node from the valToNodeMap.
+      valToNodeMap.erase(v);
+      delete node;
+    }
+  }
+
+  void addCallSiteReturnTaint(Value* retVal, Function* callee,
+                              vector<Value*> taintedArgs) {
+
+    // If the return value is tainted.
+    TaintDepGraphNode* node = new TaintDepGraphNode(retVal);
+    node->type = TaintDepGraphNode::NodeType::POS_TAINT_SOURCE;
+    node->attr.isReturnCallNode = true;
+    node->attr.callNodeArgs = taintedArgs;
+
+    valToNodeMap.insert({retVal, node});
+    topLevelNodes.push_back(node);
+  }
+
+  void addTaintSource(Value* v) {
+    TaintDepGraphNode *node = new TaintDepGraphNode(v);
+    node->type = TaintDepGraphNode::NodeType::DEF_TAINT_SOURCE;
+    valToNodeMap.insert({v, node});
+
+    addTopLevelNode(node);
+  }
+
+  void markReturnValue(Value* v) {
+    if (valToNodeMap.find(v) != valToNodeMap.end()) {
+      TaintDepGraphNode *node = valToNodeMap[v];
+      node->attr.isReturnValue = true;
+    }
+  }
+
+  void printGraph(int logLevel) {
+    dprintf(logLevel, "Printing summary graph for function ",
+            F->getName().str().c_str(), " \n\n");
+
+    for (auto node : topLevelNodes) {
+      dprintf(logLevel, "\033[0;33m Top level node: \033[0m",
+              llvmToString(node->val).c_str());
+
+      if (node->attr.isArgumentNode) {
+        dprintf(logLevel, " \033[0;31m (Argument node) \033[0m");
+      }
+      else if (node->attr.isReturnCallNode) {
+        dprintf(logLevel, " \033[0;31m (Call Site node) \033[0m");
+      }
+      else if (node->attr.isReturnValue) {
+        dprintf(logLevel, " \033[0;31m (Return value) \033[0m");
+      }
+
+      dprintf(logLevel, "\n");
+      dprintf(logLevel, "------------------------------------\n");
+
+      for (auto child : node->children) {
+        dprintf(logLevel, "\033[0;33m Child: \033[0m",
+                llvmToString(child->val).c_str());
+
+        if (child->attr.isReturnValue) {
+          dprintf(logLevel, " \033[0;31m (Return value) \033[0m");
+        }
+
+        dprintf(logLevel, "\n");
+      }
+
+      dprintf(logLevel, "------------------------------------\n");
+    }
+  }
+};
 
 // This FunctionContext is stored with each function in the FunctionWorklist.
 // For the main() function, all parameters are considered tainted.
@@ -112,7 +314,7 @@ struct FunctionTaintSet {
   // Variabes can have 4 states {UNKNOWN, TAINTED, UNTAINTED, DEPENDS}
   // The DEPENDS state means that the taintedness of this variables depends
   // on the return value of a call instruction.
-  unordered_map<Value*, vector<Instruction*>> taintSet;
+  unordered_map<Value*, vector<Value*>> taintSet;
 
   // Where in this function can NaN be generated?
   // Tracks the first instruction that can generate a NaN.
@@ -121,7 +323,7 @@ struct FunctionTaintSet {
   // Values that are both tainted and NaNs.
   set<Value*> taintedNans;
 
-  pair<bool, vector<Instruction*>> isReturnValueTainted;
+  pair<bool, vector<Value*>> isReturnValueTainted;
 
   // Has the FunctionTaintSet changed!
   bool hasChanged;
@@ -143,7 +345,7 @@ struct FunctionTaintSet {
   void checkAndPropagateTaint(Value* valueToBeTainted,
                               vector<Value*> dependVals = {}) {
 
-    vector<Instruction*> depends;
+    vector<Value*> depends;
     bool isUnConditionalTaint = false;
     bool isNaN = false;
 
@@ -178,7 +380,7 @@ struct FunctionTaintSet {
     }
   }
 
-  void taintFunctionReturnValue(Value* valToTaint, Instruction* callInst) {
+  void taintFunctionReturnValue(Value* valToTaint, Value* callInst) {
 
     taintSet.insert({valToTaint, {callInst}});
   }
@@ -254,6 +456,9 @@ struct AchlysTaintChecker : public ModulePass {
   // Mapping between a function and its FunctionTaintSet.
   unordered_map<Function*, FunctionTaintSet> funcTaintSet;
 
+  // Mapping between a function and its Taint Summary Graph.
+  unordered_map<Function*, TaintDepGraph*> funcTaintSummaryGraph;
+
   // Cache results for inter-procedural alias analysis.
   AAResults *aliasAnalysisResult;
 
@@ -305,7 +510,6 @@ struct AchlysTaintChecker : public ModulePass {
 
     string funcName = demangle(F.getName().str().c_str());
 
-
     if (funcName == "fread" || funcName.find("istream") != string::npos ||
         funcName == "read" || funcName == "aio_read")
         return true;
@@ -343,7 +547,7 @@ struct AchlysTaintChecker : public ModulePass {
   // Analyze each instruction one by one. Essentially, this function will apply
   // taint propogation and eviction policies on each instruction.
   void analyzeInstruction(Instruction*, FunctionTaintSet*,
-                          FunctionContext);
+                          FunctionContext, TaintDepGraph*);
 
   // Analyze each function one by one. We will use a lattice-based fixpoint
   // iterative, inter-procedural data flow analysis.

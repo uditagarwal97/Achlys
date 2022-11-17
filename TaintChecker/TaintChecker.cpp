@@ -54,7 +54,8 @@ namespace achlys {
   // Analyze each instruction one by one. Essentially, this function will apply
   // taint propogation and eviction policies on each instruction.
   void AchlysTaintChecker::analyzeInstruction(Instruction* i,
-                          FunctionTaintSet* fc, FunctionContext fcxt) {
+                          FunctionTaintSet* fc, FunctionContext fcxt,
+                          TaintDepGraph* depGraph) {
 
     dprintf(3, "[STEP] Analyzing instruction: ",llvmToString(i).c_str(),"\n");
 
@@ -69,6 +70,7 @@ namespace achlys {
       // [Taint Propogation] If what you are storing is tainted, then mark the
       // store location as tainted.
       fc->checkAndPropagateTaint(storeLocation, {valToStore});
+      depGraph->checkAndPropogateTaint(storeLocation, {valToStore});
 
       // [Taint Eviction] If you are storing an untainted value to a tainted
       // location, then remove the taint of the location.
@@ -78,6 +80,7 @@ namespace achlys {
       // think more about the granularity at which we are tracking taints.
       if (fc->isTainted(storeLocation) && !(fc->isTainted(valToStore))) {
         fc->removeTaint(storeLocation);
+        depGraph->removeTaint(storeLocation);
       }
     }
 
@@ -90,6 +93,7 @@ namespace achlys {
       // [Taint Propogation] If you are loading from a tainted location, mark
       // loaded value as tainted as well.
       fc->checkAndPropagateTaint(li, {loadLocation});
+      depGraph->checkAndPropogateTaint(li, {loadLocation});
     }
 
     // Hanlde GetElementPointer (GEP) instruction. GEP is used for creating a
@@ -101,6 +105,7 @@ namespace achlys {
       // [Taint Propogation] If you are referencing a tainted variable, mark the
       // resulting pointer as tainted as well.
       fc->checkAndPropagateTaint(gep, {val});
+      depGraph->checkAndPropogateTaint(gep, {val});
     }
 
     // Hanlde Binary operator like add, sub, mul, div, fdiv, etc.
@@ -115,16 +120,18 @@ namespace achlys {
         // [Taint Propogation] If any of the two operands is tainted, then the
         // resulting value will also be tainted.
         fc->checkAndPropagateTaint(bo, {firstOperand, secondOperand});
+        depGraph->checkAndPropogateTaint(bo, {firstOperand, secondOperand});
       }
 
       // Check for NaN sources.
       // Instructions like a / b can produce NaN is a and b both are tainted.
       if ((opcode == Instruction::SDiv || opcode == Instruction::FDiv) &&
             fc->isUnconditionalTainted(secondOperand) &&
-          fc->isUnconditionalTainted(firstOperand)) {
+            fc->isUnconditionalTainted(firstOperand)) {
 
           fc->addNaNSource(bo);
           fc->checkAndPropagateTaint(bo, {secondOperand, firstOperand});
+          depGraph->checkAndPropogateTaint(bo, {secondOperand, firstOperand});
       }
     }
 
@@ -135,6 +142,7 @@ namespace achlys {
 
       auto firstOperand = i->getOperand(0);
       fc->checkAndPropagateTaint(i, {firstOperand});
+      depGraph->checkAndPropogateTaint(i, {firstOperand});
     }
 
     // Handle Call instruction.
@@ -151,12 +159,19 @@ namespace achlys {
 
           // Check which arguments of this call are tainted.
           vector<int> argTainted;
+          vector<Value*> taintedVal;
+
           for (size_t i = 0; i < numArguments; i++) {
 
             auto arg = ci->getArgOperand(i);
-            if (fc->isTainted(arg))
+            if (fc->isTainted(arg)) {
               argTainted.push_back(i+1);
+              taintedVal.push_back(arg);
+            }
           }
+
+          if (argTainted.size() == 0)
+            argTainted.push_back(0);
 
           funcWorklist.push({callee, {ci, ci->getParent()->getParent(),
                             argTainted}});
@@ -165,6 +180,7 @@ namespace achlys {
           // be tainted.
           if (!callee->getReturnType()->isVoidTy()) {
             fc->taintFunctionReturnValue(ci, ci);
+            depGraph->addCallSiteReturnTaint(ci, callee, taintedVal);
           }
         }
         // For third-party functions, we have to check if it is either a
@@ -176,22 +192,36 @@ namespace achlys {
 
           dprintf(1, "[New Info] Found new Taint source: ",
                       demangle(callee->getName().str().c_str()).c_str(), "\n");
-          fc->checkAndPropagateTaint(ci, {});
+
+          if (demangle(callee->getName().str().c_str()).find("istream")
+              != string::npos) {
+            Value* inpVal = ci->getArgOperand(numArguments - 1);
+            fc->checkAndPropagateTaint(inpVal, {});
+            depGraph->addTaintSource(inpVal);
+          }
+          else {
+            fc->checkAndPropagateTaint(ci, {});
+            depGraph->addTaintSource(ci);
+          }
         }
         else {
 
           bool isArgTainted = false;
+          vector<Value*> taintedARgs;
           for (size_t i = 0; i < numArguments; i++) {
 
             auto arg = ci->getArgOperand(i);
-            if (fc->isTainted(arg))
+            if (fc->isTainted(arg)) {
               isArgTainted = true;
+              taintedARgs.push_back(arg);
+            }
           }
 
           if (isNaNSourceFunction(*callee)) {
             if (isArgTainted) {
               fc->addNaNSource(ci);
               fc->taintFunctionReturnValue(ci, {});
+              depGraph->checkAndPropogateTaint(ci, taintedARgs);
             }
           }
           else {
@@ -209,6 +239,8 @@ namespace achlys {
 
         Value *vl = ri->getOperand(0);
         fc->checkAndPropagateTaint(ri, {vl});
+        depGraph->checkAndPropogateTaint(ri, {vl});
+        depGraph->markReturnValue(ri);
       }
 
       fc->markThisValueAsReturnValue(ri);
@@ -231,13 +263,18 @@ namespace achlys {
     dprintf(1, "Started Analyzing function: ", F->getName().str().c_str(), "\n");
 
     FunctionTaintSet taintSet;
+    TaintDepGraph* depGraph;
+
     if (funcTaintSet.find(F) == funcTaintSet.end()) {
       dprintf(1, "[STEP] Analysing this function for the first time\n");
+      depGraph = new TaintDepGraph(F);
+      funcTaintSummaryGraph.insert({F, depGraph});
     }
     else {
       dprintf(1, "[STEP] Analysing this function again\n");
       taintSet = funcTaintSet[F];
       taintSet.snapshot(); // Just to check if the taint set changes or not.
+      depGraph = funcTaintSummaryGraph[F];
     }
 
     // Add function parameters to taint set.
@@ -249,13 +286,22 @@ namespace achlys {
         argCounter++;
 
         if (fc.numArgTainted[idxCounter] == argCounter) {
-          taintSet.checkAndPropagateTaint(arg);
+
+          if (F->getName().str().find("main") != string::npos)
+            taintSet.checkAndPropagateTaint(arg, {});
+          else
+            taintSet.taintFunctionReturnValue(arg, arg);
+
           dprintf(1, "[New Info] Found tainted argument ",
                   llvmToString(arg).c_str(), "\n");
 
           // Remove the argument form the set.
           idxCounter++;
         }
+
+        // Add all arguments to the dependency graph, irrespective of whether or
+        // not they are tainted.
+        depGraph->addFunctionArgument(arg);
       }
     }
 
@@ -265,11 +311,12 @@ namespace achlys {
       for (auto ii = bb->begin(); ii != bb->end(); ii++) {
 
         Instruction* ins = &(*ii);
-        analyzeInstruction(ins, &taintSet, fc);
+        analyzeInstruction(ins, &taintSet, fc, depGraph);
       }
     }
 
     taintSet.summarize(1);
+    depGraph->printGraph(1);
 
     // FIXME: Complete this.
     if (taintSet.hasChanged) {
@@ -282,6 +329,14 @@ namespace achlys {
         dprintf(1, "[STEP] Return value of this function is tainted. \
                     Backtracking to re-analyze the caller\n");
       }
+    }
+
+    // Add the taint set of this function to the global map.
+    if (funcTaintSet.find(F) == funcTaintSet.end()){
+      funcTaintSet.insert({F, taintSet});
+    }
+    else {
+      funcTaintSet[F] = taintSet;
     }
 
     dprintf(1, "[STEP] Finished Analyzing function: ",

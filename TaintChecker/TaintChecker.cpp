@@ -126,12 +126,13 @@ namespace achlys {
       // Check for NaN sources.
       // Instructions like a / b can produce NaN is a and b both are tainted.
       if ((opcode == Instruction::SDiv || opcode == Instruction::FDiv) &&
-            fc->isUnconditionalTainted(secondOperand) &&
-            fc->isUnconditionalTainted(firstOperand)) {
+            depGraph->isTainted(secondOperand) &&
+            depGraph->isTainted(firstOperand)) {
 
           fc->addNaNSource(bo);
           fc->checkAndPropagateTaint(bo, {secondOperand, firstOperand});
           depGraph->checkAndPropogateTaint(bo, {secondOperand, firstOperand});
+          depGraph->markValueAsNaNSource(bo);
       }
     }
 
@@ -222,11 +223,14 @@ namespace achlys {
               fc->addNaNSource(ci);
               fc->taintFunctionReturnValue(ci, {});
               depGraph->checkAndPropogateTaint(ci, taintedARgs);
+              depGraph->markValueAsNaNSource(ci);
             }
           }
           else {
-            if (isArgTainted)
+            if (isArgTainted) {
               fc->checkAndPropagateTaint(ci, {});
+              depGraph->checkAndPropogateTaint(ci, taintedARgs);
+            }
           }
         }
       }

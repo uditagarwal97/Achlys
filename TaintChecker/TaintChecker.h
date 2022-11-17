@@ -88,7 +88,9 @@ int getSourceCodeLine(Instruction *I) {
 // the tainted variables or pointers that depends on the top nodes.
 struct TaintDepGraphNode {
   Value *val;
-  enum NodeType {DEF_TAINT_SOURCE, POS_TAINT_SOURCE, POS_TAINT_VAR} type;
+  enum NodeType {UNKNOWN, DEF_TAINT_SOURCE, POS_TAINT_SOURCE, POS_TAINT_VAR}
+                type;
+  enum NodeNaNStatus {NAN_UNKNOWN, NAN_SOURCE, TAINTED_NAN} nanStatus;
 
   // Debug attributes for this node.
   struct attributes {
@@ -107,7 +109,7 @@ struct TaintDepGraphNode {
   // For storing child or parent.
   std::vector<TaintDepGraphNode *> children;
 
-  TaintDepGraphNode(Value *v) : val(v) {}
+  TaintDepGraphNode(Value *v) : val(v), type(UNKNOWN), nanStatus(NAN_UNKNOWN) {}
 };
 
 // Structure of taint summary graph.
@@ -137,16 +139,41 @@ struct TaintDepGraph {
     addTopLevelNode(node);
   }
 
+  bool isTainted(Value* v) {
+    if(valToNodeMap.find(v) != valToNodeMap.end())
+      return true;
+
+    return false;
+  }
+
+  void markValueAsNaNSource(Value* v) {
+    if(valToNodeMap.find(v) != valToNodeMap.end())
+      valToNodeMap[v]->nanStatus = TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE;
+  }
+
   // Add valToBeTainted to the graph, if atleast one of the value in dependsVals
   // is tainted.
   void checkAndPropogateTaint(Value* valToBeTainted, vector<Value*> dependVals){
 
+    // check if valToBeTainted is already tainted.
+    if (valToNodeMap.find(valToBeTainted) != valToNodeMap.end())
+      return;
+
     bool isTainted = false;
+    bool isAnyDepNaN = false;
     vector<Value*> taintDepSet;
 
     for (Value* v : dependVals) {
       if (valToNodeMap.find(v) != valToNodeMap.end()) {
         isTainted = true;
+
+        // Check if any dependency is NaN.
+        if (valToNodeMap[v]->nanStatus ==
+            TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE ||
+            valToNodeMap[v]->nanStatus ==
+            TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
+          isAnyDepNaN = true;
+        }
         taintDepSet.push_back(v);
       }
     }
@@ -156,6 +183,9 @@ struct TaintDepGraph {
       TaintDepGraphNode *node = new TaintDepGraphNode(valToBeTainted);
       node->type = TaintDepGraphNode::NodeType::POS_TAINT_VAR;
       valToNodeMap.insert({valToBeTainted, node});
+
+      if (isAnyDepNaN)
+        node->nanStatus = TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN;
 
       addBottomLevelNode(node);
 
@@ -264,6 +294,13 @@ struct TaintDepGraph {
       else if (node->attr.isReturnValue) {
         dprintf(logLevel, " \033[0;31m (Return value) \033[0m");
       }
+      else if (node->nanStatus == TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE) {
+        dprintf(logLevel, " \033[0;31m (NaN source) \033[0m");
+      }
+      else if (node->nanStatus ==
+               TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
+        dprintf(logLevel, " \033[0;31m (Tainted NaN) \033[0m");
+      }
 
       dprintf(logLevel, "\n");
       dprintf(logLevel, "------------------------------------\n");
@@ -274,6 +311,14 @@ struct TaintDepGraph {
 
         if (child->attr.isReturnValue) {
           dprintf(logLevel, " \033[0;31m (Return value) \033[0m");
+        }
+        else if (child->nanStatus ==
+                TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE) {
+          dprintf(logLevel, " \033[0;31m (NaN source) \033[0m");
+        }
+        else if (child->nanStatus ==
+                TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
+          dprintf(logLevel, " \033[0;31m (Tainted NaN) \033[0m");
         }
 
         dprintf(logLevel, "\n");

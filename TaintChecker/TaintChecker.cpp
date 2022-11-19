@@ -276,10 +276,11 @@ namespace achlys {
       funcTaintSummaryGraph.insert({F, depGraph});
     }
     else {
-      dprintf(1, "[STEP] Analysing this function again\n");
+      dprintf(1, "[STEP] Analysing this function again. Returning.\n");
       taintSet = funcTaintSet[F];
       taintSet.snapshot(); // Just to check if the taint set changes or not.
       depGraph = funcTaintSummaryGraph[F];
+      return; // Don't calculate the function summary again.
     }
 
     // Add function parameters to taint set.
@@ -297,7 +298,7 @@ namespace achlys {
           else
             taintSet.taintFunctionReturnValue(arg, arg);
 
-          dprintf(1, "[New Info] Found tainted argument ",
+          dprintf(1, "[NEW INFO] Found tainted argument ",
                   llvmToString(arg).c_str(), "\n");
 
           // Remove the argument form the set.
@@ -320,21 +321,8 @@ namespace achlys {
       }
     }
 
-    taintSet.summarize(1);
+    taintSet.summarize(4);
     depGraph->printGraph(1);
-
-    // FIXME: Complete this.
-    if (taintSet.hasChanged) {
-      dprintf(1, "[DEBUG] TaintSet of this function has changed. Back track and \
-              reanalyze the callers if the return value is tainted\n");
-
-      if ((!F->getReturnType()->isVoidTy()) &&
-          taintSet.isReturnValueTainted.first) {
-
-        dprintf(1, "[STEP] Return value of this function is tainted. \
-                    Backtracking to re-analyze the caller\n");
-      }
-    }
 
     // Add the taint set of this function to the global map.
     if (funcTaintSet.find(F) == funcTaintSet.end()){
@@ -372,6 +360,11 @@ namespace achlys {
       dprintf(1, "[WARNING] Recursive function call found for function: ",
               f->getName().str().c_str(), "\n");
       return false;
+    }
+
+    // Got followint tainted Args
+    for (auto i : taintedArgs) {
+      dprintf(4, "[DEBUG] Tainted argument: ", to_string(i).c_str(), "\n");
     }
 
     // Add it to the call stack.
@@ -451,6 +444,13 @@ namespace achlys {
         auto arg_ii = ii;
         Value* arg = dyn_cast<Value>(arg_ii);
 
+        // Check if this argument is a constant.
+        if (isa<Constant>(arg)) {
+          dprintf(3, "Found constant argument: ", llvmToString(arg).c_str(),
+                  "\n");
+          continue;
+        }
+
         if (depGraph->valToNodeMap.find(arg) != depGraph->valToNodeMap.end()) {
           TaintDepGraphNode* argNode = depGraph->valToNodeMap[arg];
 
@@ -477,7 +477,7 @@ namespace achlys {
         // Mark all child nodes as tainted.
         for (auto childNode : tlNode->children) {
 
-          tlNode->setCurrentStackTaint();
+          childNode->setCurrentStackTaint();
           if (childNode->isNaNSource()) {
 
             // Check if this node is already tainted by some other parent.
@@ -501,12 +501,13 @@ namespace achlys {
     for (auto nanSource : nanSourceToTaintedParentCount) {
 
       if (nanSource.second == nanSource.first->children.size()) {
-        dprintf(1, "[INFO] Found a nanSource with all parents tainted: ",
+        dprintf(1, "[NEW INFO] Found a nanSource with all parents tainted: ",
                 llvmToString(nanSource.first->val).c_str(), "\n");
       }
     }
 
     depGraph->resetCurrentCallStack();
+    funCS->pop();
 
     dprintf(1, "[STEP] Finished collapsing constraints for function: ",
             f->getName().str().c_str(), "  Return val tainted ? ",

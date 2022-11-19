@@ -401,9 +401,6 @@ struct FunctionCallStack {
 
   bool isRecursion(Function *f) {
     if (functionsInCallStack.find(f) != functionsInCallStack.end()) {
-      dprintf(1, "Recursion detected in function ", f->getName().str().c_str(),
-              "\n");
-
       return true;
     }
 

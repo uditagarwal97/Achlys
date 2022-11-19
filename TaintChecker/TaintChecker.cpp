@@ -28,6 +28,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 
 #include <cstdarg>
+#include <ctime>
 
 using namespace llvm;
 using namespace std;
@@ -305,7 +306,7 @@ namespace achlys {
 
         // Add all arguments to the dependency graph, irrespective of whether or
         // not they are tainted.
-        depGraph->addFunctionArgument(arg);
+        depGraph->addFunctionArgument(arg, argCounter);
       }
     }
 
@@ -347,20 +348,189 @@ namespace achlys {
                 F->getName().str().c_str(), "\n");
   }
 
+  // Function to interprocedurally collapse constaints.
+  // It will return true if the return value of this function is tainted.
+  bool AchlysTaintChecker::collapseConstraints(Function* f,
+                          FunctionCallStack* funCS,
+                          vector<int> taintedArgs) {
+
+    dprintf(1, "[STEP] Started collapsing constraints for function: ",
+            f->getName().str().c_str(), "\n");
+
+    // Check and get dependencies graph of this function.
+    if (funcTaintSummaryGraph.find(f) == funcTaintSummaryGraph.end()) {
+      dprintf(1, "[WARNING] No taint summary graph found for function: ",
+              f->getName().str().c_str(), "\n");
+      return false;
+    }
+
+    TaintDepGraph* depGraph = funcTaintSummaryGraph[f];
+
+    // Check if it is a recursion.
+    // FIXME: Support recursive functions.
+    if (funCS->isRecursion(f)) {
+      dprintf(1, "[WARNING] Recursive function call found for function: ",
+              f->getName().str().c_str(), "\n");
+      return false;
+    }
+
+    // Add it to the call stack.
+    funCS->push(f);
+
+    bool isRetTainted = false;
+    unordered_map<TaintDepGraphNode*, int> nanSourceToTaintedParentCount;
+
+    // Analyze all function-argument-based or 100% taint sources top-level taint
+    // nodes and collapse the constraints.
+    for (auto tlNode : depGraph->topLevelNodes) {
+      if (tlNode->attr.isArgumentNode ||
+          tlNode->nanStatus == TaintDepGraphNode::NodeType::DEF_TAINT_SOURCE) {
+
+        // Find which function arguments are 100% tainted in the given
+        // function call stack.
+        if (find(taintedArgs.begin(), taintedArgs.end(),
+            tlNode->attr.argumentNumber) != taintedArgs.end() ||
+            tlNode->nanStatus == TaintDepGraphNode::NodeType::DEF_TAINT_SOURCE) {
+
+          dprintf(1,
+                  "[STEP] Found tainted argument or definitly a taint source: ",
+                  to_string(tlNode->attr.argumentNumber).c_str(),"\n");
+
+          tlNode->setCurrentStackTaint();
+
+          // Mark all child nodes as tainted.
+          for (auto childNode : tlNode->children) {
+
+            childNode->setCurrentStackTaint();
+            if (childNode->isNaNSource()) {
+
+              // Check if this node is already tainted by some other parent.
+              if (nanSourceToTaintedParentCount.find(childNode) ==
+                  nanSourceToTaintedParentCount.end()) {
+                nanSourceToTaintedParentCount.insert({childNode, 1});;
+              }
+              else {
+                nanSourceToTaintedParentCount[childNode]++;
+              }
+            }
+            // If this node is 100% tainted and it is a return value.
+            if (childNode->attr.isReturnValue) {
+              isRetTainted = true;
+            }
+          }
+        }
+      }
+    }
+
+    // Analyze all call-site based top-level taint nodes.
+    // We will resolve each call site in the same order as they appear in the
+    // function source code. This order is implicitly maintained by the vector
+    // callSiteReturnNode.
+    for (auto tlNode : depGraph->callSiteReturnNode){
+
+      // Get call instruction.
+      CallInst* callInst = dyn_cast<CallInst>(tlNode->val);
+
+      // Get the called function.
+      Function* calledFunc = callInst->getCalledFunction();
+
+      // inter-procedurally collapse contraints for user-defined functions only.
+      if (!isUserDefinedFunction(*calledFunc))
+        continue;
+
+      // Get all tainted arguments of the call instruction.
+      vector<int> taintedCallArgNumber;
+      int numArgument = 0;
+
+      dprintf(3, "Analysing call-site during collapse constraints: ",
+              llvmToString(callInst).c_str(), "\n");
+
+      for (auto ii = callInst->arg_begin(); ii != callInst->arg_end(); ii++) {
+        numArgument++;
+
+        auto arg_ii = ii;
+        Value* arg = dyn_cast<Value>(arg_ii);
+
+        if (depGraph->valToNodeMap.find(arg) != depGraph->valToNodeMap.end()) {
+          TaintDepGraphNode* argNode = depGraph->valToNodeMap[arg];
+
+          if (argNode->isNodeTaintedInCurrentStack()) {
+            taintedCallArgNumber.push_back(numArgument);
+          }
+        }
+        else
+          assert(false && "Didn't found the node in depGraph while collapse \
+                          constraints");
+      }
+
+      // Recursively collapse constraints.
+      bool isRetValTainted =
+        collapseConstraints(calledFunc, funCS, taintedCallArgNumber);
+
+      if (isRetValTainted) {
+
+        dprintf(1, "[STEP] Got tainted return value from function: ",
+                calledFunc->getName().str().c_str(), "\n");
+
+        tlNode->setCurrentStackTaint();
+
+        // Mark all child nodes as tainted.
+        for (auto childNode : tlNode->children) {
+
+          tlNode->setCurrentStackTaint();
+          if (childNode->isNaNSource()) {
+
+            // Check if this node is already tainted by some other parent.
+            if (nanSourceToTaintedParentCount.find(childNode) ==
+                nanSourceToTaintedParentCount.end()) {
+              nanSourceToTaintedParentCount.insert({childNode, 1});;
+            }
+            else {
+              nanSourceToTaintedParentCount[childNode]++;
+            }
+          }
+          // If this node is 100% tainted and it is a return value.
+          if (childNode->attr.isReturnValue) {
+            isRetTainted = true;
+          }
+        }
+      }
+    }
+
+    // Find nanSources with all parent tainted.
+    for (auto nanSource : nanSourceToTaintedParentCount) {
+
+      if (nanSource.second == nanSource.first->children.size()) {
+        dprintf(1, "[INFO] Found a nanSource with all parents tainted: ",
+                llvmToString(nanSource.first->val).c_str(), "\n");
+      }
+    }
+
+    depGraph->resetCurrentCallStack();
+
+    dprintf(1, "[STEP] Finished collapsing constraints for function: ",
+            f->getName().str().c_str(), "  Return val tainted ? ",
+            isRetTainted?"true":"false", "\n");
+
+    return isRetTainted;
+  }
+
   // Entry point of this pass.
   bool AchlysTaintChecker::runOnModule(Module& M) {
 
     dprintf(1,
           "---------------Starting taint analysis pass-------------------\n");
 
+    dprintf(1,
+          "---------------Calculating Function Summaries-------------------\n");
+
+    const clock_t begin_time = clock();
+
     // Iterate through all function in the program and find the main() function.
     for (Function &F : M) {
 
       if (isUserDefinedFunction(F) && F.getName().str().compare("main") == 0) {
 
-        //AAResultsWrapperPass a;
-        //a.runOnFunction(F);
-        //aliasAnalysisResult = &(a.getAAResults());
         // Init results from alias analysis pass for this function.
         aliasAnalysisResult = &(getAnalysis<AAResultsWrapperPass>(F).getAAResults());
 
@@ -398,6 +568,14 @@ namespace achlys {
                "\n");
       }
     }
+
+    float timeTook = float( clock () - begin_time ) /  CLOCKS_PER_SEC;
+    dprintf(1,
+          "-----------Finished Calculating Function Summaries: time = ",
+          to_string(timeTook).c_str()," Seconds \n");
+
+    FunctionCallStack fcs;
+    collapseConstraints(M.getFunction("main"), &fcs, {1, 2});
 
     gracefulExit();
     return false;

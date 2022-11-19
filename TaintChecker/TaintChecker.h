@@ -13,7 +13,9 @@
 #include <vector>
 #include <set>
 #include <cassert>
+#include <stack>
 #include <unordered_map>
+#include <unordered_set>
 #include <initializer_list>
 
 // Output strings for debugging
@@ -97,19 +99,43 @@ struct TaintDepGraphNode {
     bool isReturnCallNode;
     bool isArgumentNode;
     bool isReturnValue;
+    int argumentNumber;
     vector<Value*> callNodeArgs;
 
     attributes() {
       isReturnCallNode = false;
       isArgumentNode = false;
       isReturnValue = false;
+      argumentNumber = -1;
     }
   } attr;
+
+  // Is this node tainted in current function call stack?
+  bool isTaintedInCurrentStack;
 
   // For storing child or parent.
   std::vector<TaintDepGraphNode *> children;
 
-  TaintDepGraphNode(Value *v) : val(v), type(UNKNOWN), nanStatus(NAN_UNKNOWN) {}
+  bool isNaNSource() {
+    return (nanStatus == NAN_SOURCE);
+  }
+
+  // These functions are used to store taint information during inter-procedural,
+  // context-sensitive analysis.
+  void setCurrentStackTaint() {
+    isTaintedInCurrentStack = true;
+  }
+
+  bool isNodeTaintedInCurrentStack() {
+    return isTaintedInCurrentStack;
+  }
+
+  void resetCurrentCallStack() {
+    isTaintedInCurrentStack = false;
+  }
+
+  TaintDepGraphNode(Value *v) : val(v), type(UNKNOWN), nanStatus(NAN_UNKNOWN),
+                                isTaintedInCurrentStack(false) {}
 };
 
 // Structure of taint summary graph.
@@ -117,6 +143,7 @@ struct TaintDepGraph {
   std::vector<TaintDepGraphNode *> topLevelNodes;
   std::vector<TaintDepGraphNode *> bottomLevelNodes;
   std::unordered_map<Value*, TaintDepGraphNode *> valToNodeMap;
+  std::vector<TaintDepGraphNode *> callSiteReturnNode;
 
   Function *F;
 
@@ -130,10 +157,11 @@ struct TaintDepGraph {
     bottomLevelNodes.push_back(node);
   }
 
-  void addFunctionArgument(Value* v) {
+  void addFunctionArgument(Value* v, int argNum) {
     TaintDepGraphNode *node = new TaintDepGraphNode(v);
     node->attr.isArgumentNode = true;
     node->type = TaintDepGraphNode::NodeType::POS_TAINT_SOURCE;
+    node->attr.argumentNumber = argNum;
     valToNodeMap.insert({v, node});
 
     addTopLevelNode(node);
@@ -232,6 +260,15 @@ struct TaintDepGraph {
         }
       }
 
+      // Remove the node from the call site return node.
+      for (auto it = callSiteReturnNode.begin(); it != callSiteReturnNode.end();
+           it++) {
+        if (*it == node) {
+          callSiteReturnNode.erase(it);
+          break;
+        }
+      }
+
       // Remove the node from the children of its parents.
       for (TaintDepGraphNode *parent : node->children) {
         for (auto it = parent->children.begin(); it != parent->children.end();
@@ -249,6 +286,15 @@ struct TaintDepGraph {
     }
   }
 
+  // Reset taint status of all the nodes in the graph.
+  // This function is used for re-using function summaries across different
+  // context.
+  void resetCurrentCallStack() {
+    for (auto it = valToNodeMap.begin(); it != valToNodeMap.end(); it++) {
+      it->second->resetCurrentCallStack();
+    }
+  }
+
   void addCallSiteReturnTaint(Value* retVal, Function* callee,
                               vector<Value*> taintedArgs) {
 
@@ -260,6 +306,7 @@ struct TaintDepGraph {
 
     valToNodeMap.insert({retVal, node});
     topLevelNodes.push_back(node);
+    callSiteReturnNode.push_back(node);
   }
 
   void addTaintSource(Value* v) {
@@ -286,7 +333,8 @@ struct TaintDepGraph {
               llvmToString(node->val).c_str());
 
       if (node->attr.isArgumentNode) {
-        dprintf(logLevel, " \033[0;31m (Argument node) \033[0m");
+        dprintf(logLevel, " \033[0;31m (Argument node) Argument Index=",
+                to_string(node->attr.argumentNumber).c_str()," \033[0m");
       }
       else if (node->attr.isReturnCallNode) {
         dprintf(logLevel, " \033[0;31m (Call Site node) \033[0m");
@@ -326,6 +374,40 @@ struct TaintDepGraph {
 
       dprintf(logLevel, "------------------------------------\n");
     }
+  }
+};
+
+// DS to implement a function call stack for collapsing the constraints.
+struct FunctionCallStack {
+  stack<Function*> callStack;
+  int length;
+  unordered_set<Function*> functionsInCallStack;
+
+  FunctionCallStack() {
+    length = 0;
+  }
+
+  void push(Function* F) {
+    callStack.push(F);
+    length++;
+    functionsInCallStack.insert(F);
+  }
+
+  void pop() {
+    functionsInCallStack.erase(functionsInCallStack.find(callStack.top()));
+    callStack.pop();
+    length--;
+  }
+
+  bool isRecursion(Function *f) {
+    if (functionsInCallStack.find(f) != functionsInCallStack.end()) {
+      dprintf(1, "Recursion detected in function ", f->getName().str().c_str(),
+              "\n");
+
+      return true;
+    }
+
+    return false;
   }
 };
 
@@ -588,6 +670,9 @@ struct AchlysTaintChecker : public ModulePass {
     errs() << output.str();
     output.flush();
   }
+
+  // Function to interprocedurally collapse constraints.
+  bool collapseConstraints(Function*, FunctionCallStack*, vector<int>);
 
   // Analyze each instruction one by one. Essentially, this function will apply
   // taint propogation and eviction policies on each instruction.

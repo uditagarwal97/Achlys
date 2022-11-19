@@ -29,6 +29,7 @@
 
 #include <cstdarg>
 #include <ctime>
+#include <unordered_set>
 
 using namespace llvm;
 using namespace std;
@@ -145,6 +146,15 @@ namespace achlys {
       auto firstOperand = i->getOperand(0);
       fc->checkAndPropagateTaint(i, {firstOperand});
       depGraph->checkAndPropogateTaint(i, {firstOperand});
+    }
+
+    // Hanlde comparision instruction.
+    else if (auto ci = dyn_cast<CmpInst>(i)) {
+
+      auto firstOperand = ci->getOperand(0);
+      auto secondOperand = ci->getOperand(1);
+      fc->checkAndPropagateTaint(i, {firstOperand, secondOperand});
+      depGraph->checkAndPropogateTaint(i, {firstOperand, secondOperand});
     }
 
     // Handle Call instruction.
@@ -336,11 +346,35 @@ namespace achlys {
                 F->getName().str().c_str(), "\n");
   }
 
+  // Filter attacker controlled NaN nodes to keep only those that affects the
+  // control-flow of the program.
+  void AchlysTaintChecker::filterAttackerControlledNANSources(
+                              AttackerControlledNAN *attackCtrlNAN) {
+
+    for (auto it : attackCtrlNAN->nodeToFunctionMap) {
+      TaintDepGraphNode* node = it.first;
+      Function* F = it.second;
+
+      if (funcTaintSummaryGraph.find(F) != funcTaintSummaryGraph.end()) {
+
+        TaintDepGraph* depGraph = funcTaintSummaryGraph[F];
+        errs()<<*(node->val);
+
+        // Check if any child of this node is a cmp instruction.
+        // If yes, then check whether the cmp instruction in a branch instruction.
+        // TODO: Complete this!
+      }
+      else
+        assert(false && "Function summary graph not found while \
+                filtering attacker controlled NaN sources");
+    }
+  }
+
   // Function to interprocedurally collapse constaints.
   // It will return true if the return value of this function is tainted.
   bool AchlysTaintChecker::collapseConstraints(Function* f,
-                          FunctionCallStack* funCS,
-                          vector<int> taintedArgs) {
+                          FunctionCallStack* funCS, vector<int> taintedArgs,
+                          AttackerControlledNAN *attackCtrlNAN) {
 
     dprintf(1, "[STEP] Started collapsing constraints for function: ",
             f->getName().str().c_str(), "\n");
@@ -465,7 +499,8 @@ namespace achlys {
 
       // Recursively collapse constraints.
       bool isRetValTainted =
-        collapseConstraints(calledFunc, funCS, taintedCallArgNumber);
+        collapseConstraints(calledFunc, funCS, taintedCallArgNumber,
+                            attackCtrlNAN);
 
       if (isRetValTainted) {
 
@@ -503,6 +538,9 @@ namespace achlys {
       if (nanSource.second == nanSource.first->children.size()) {
         dprintf(1, "[NEW INFO] Found a nanSource with all parents tainted: ",
                 llvmToString(nanSource.first->val).c_str(), "\n");
+
+        TaintDepGraphNode* nanSourceNode = nanSource.first;
+        attackCtrlNAN->addNode(nanSourceNode, f);
       }
     }
 
@@ -575,8 +613,14 @@ namespace achlys {
           "-----------Finished Calculating Function Summaries: time = ",
           to_string(timeTook).c_str()," Seconds \n");
 
+    AttackerControlledNAN attackCtrlNAN;
     FunctionCallStack fcs;
-    collapseConstraints(M.getFunction("main"), &fcs, {1, 2});
+    collapseConstraints(M.getFunction("main"), &fcs, {1, 2},
+                        &attackCtrlNAN);
+
+    // Check which attacker controlled NaN sources can potentially alter the
+    // control flow of the application.
+    filterAttackerControlledNANSources(&attackCtrlNAN);
 
     gracefulExit();
     return false;

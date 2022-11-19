@@ -116,6 +116,13 @@ struct TaintDepGraphNode {
   // For storing child or parent.
   std::vector<TaintDepGraphNode *> children;
 
+  void addChildOrParent(TaintDepGraphNode *node) {
+
+    // Check if node is already present in children.
+    if (find(children.begin(), children.end(), node) == children.end())
+      children.push_back(node);
+  }
+
   bool isNaNSource() {
     return (nanStatus == NAN_SOURCE);
   }
@@ -141,7 +148,6 @@ struct TaintDepGraphNode {
 // Structure of taint summary graph.
 struct TaintDepGraph {
   std::vector<TaintDepGraphNode *> topLevelNodes;
-  std::vector<TaintDepGraphNode *> bottomLevelNodes;
   std::unordered_map<Value*, TaintDepGraphNode *> valToNodeMap;
   std::vector<TaintDepGraphNode *> callSiteReturnNode;
 
@@ -151,10 +157,6 @@ struct TaintDepGraph {
 
   void addTopLevelNode(TaintDepGraphNode *node) {
     topLevelNodes.push_back(node);
-  }
-
-  void addBottomLevelNode(TaintDepGraphNode *node) {
-    bottomLevelNodes.push_back(node);
   }
 
   void addFunctionArgument(Value* v, int argNum) {
@@ -171,6 +173,14 @@ struct TaintDepGraph {
     if(valToNodeMap.find(v) != valToNodeMap.end())
       return true;
 
+    return false;
+  }
+
+  bool isTopLevelNode(TaintDepGraphNode *node) {
+    for (auto n : topLevelNodes) {
+      if (n == node)
+        return true;
+    }
     return false;
   }
 
@@ -215,22 +225,32 @@ struct TaintDepGraph {
       if (isAnyDepNaN)
         node->nanStatus = TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN;
 
-      addBottomLevelNode(node);
-
       for (Value* v : taintDepSet) {
         TaintDepGraphNode *vNode = valToNodeMap[v];
+        // Check the parent to which this node is already connected.
+        unordered_set<TaintDepGraphNode*> parentConnected;
 
         // If it is a top-level node.
         if (vNode->type == TaintDepGraphNode::NodeType::POS_TAINT_SOURCE ||
             vNode->type == TaintDepGraphNode::NodeType::DEF_TAINT_SOURCE) {
-          vNode->children.push_back(node);
-          node->children.push_back(vNode);
+
+          // Check if this node is already connected to the parent.
+          if (parentConnected.find(vNode) == parentConnected.end()) {
+            vNode->addChildOrParent(node);
+            node->addChildOrParent(vNode);
+            parentConnected.insert(vNode);
+          }
         }
         else {
           // If it is a bottom-level node.
           for (TaintDepGraphNode *parent : vNode->children) {
-            parent->children.push_back(node);
-            node->children.push_back(parent);
+
+            // Check if this node is already connected to the parent.
+            if (parentConnected.find(parent) == parentConnected.end()) {
+              parent->addChildOrParent(node);
+              node->addChildOrParent(parent);
+              parentConnected.insert(parent);
+            }
           }
         }
       }
@@ -242,15 +262,6 @@ struct TaintDepGraph {
 
     if (valToNodeMap.find(v) != valToNodeMap.end()) {
       TaintDepGraphNode *node = valToNodeMap[v];
-
-      // Remove the node from the bottom level nodes.
-      for (auto it = bottomLevelNodes.begin(); it != bottomLevelNodes.end();
-           it++) {
-        if (*it == node) {
-          bottomLevelNodes.erase(it);
-          break;
-        }
-      }
 
       // Remove the node from the top level nodes.
       for (auto it = topLevelNodes.begin(); it != topLevelNodes.end(); it++) {
@@ -428,6 +439,17 @@ struct FunctionContext {
                                          Or pass 0 for none.");
 
     std::sort(numArgTainted.begin(), numArgTainted.end());
+  }
+};
+
+// DS to hold attacker controlled NAN sources
+struct AttackerControlledNAN {
+  unordered_map<TaintDepGraphNode*, Function*> nodeToFunctionMap;
+
+  AttackerControlledNAN() {}
+
+  void addNode(TaintDepGraphNode* node, Function* F) {
+    nodeToFunctionMap.insert({node, F});
   }
 };
 
@@ -669,7 +691,8 @@ struct AchlysTaintChecker : public ModulePass {
   }
 
   // Function to interprocedurally collapse constraints.
-  bool collapseConstraints(Function*, FunctionCallStack*, vector<int>);
+  bool collapseConstraints(Function*, FunctionCallStack*, vector<int>,
+                          AttackerControlledNAN*);
 
   // Analyze each instruction one by one. Essentially, this function will apply
   // taint propogation and eviction policies on each instruction.
@@ -682,6 +705,11 @@ struct AchlysTaintChecker : public ModulePass {
   //    - Handle recursive function calls.
   //    - Handle pointers and data structures (Abstract memory model)
   void analyzeFunction(Function *F, FunctionContext fc);
+
+  // Filter attacker controlled NaN nodes to keep only those that affects the
+  // control-flow of the program.
+  void filterAttackerControlledNANSources(
+                              AttackerControlledNAN*);
 
   // Entry point of this pass.
   bool runOnModule(Module& M) override;

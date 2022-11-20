@@ -30,7 +30,7 @@ int main(int argc, char** argv) {
 
     int incr_val = foo(val);
 
-    float f = bar(incr_val) / val;
+    float f = (float) bar(incr_val) / (float)val;
 
     // Dummy function calls to test context-sensitive taint tracking.
     val = bar(foo(2));

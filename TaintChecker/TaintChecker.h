@@ -674,9 +674,12 @@ struct AchlysTaintChecker : public ModulePass {
   // Cache results for inter-procedural alias analysis.
   AAResults *aliasAnalysisResult;
 
+  // If IR has changed.
+  bool hasIRChanged;
+
   // Constructor
   static char ID;
-  AchlysTaintChecker() : ModulePass(ID) {}
+  AchlysTaintChecker() : ModulePass(ID), hasIRChanged(false) {}
 
   // Check if a binary instruction is constant or not.
   // a - a, a xor a, a X 0, a / a are all constant instructions.
@@ -776,6 +779,13 @@ struct AchlysTaintChecker : public ModulePass {
   // control-flow of the program.
   void filterAttackerControlledNANSources(
                               AttackerControlledNAN*);
+
+
+  // Function to edit LLVM IR and add injectFault() calls.
+  void insertFICall(Instruction*, Function*, int);
+
+  // Add instrumentations for fault injection.
+  void doFaultInjectionInstrumentation(AttackerControlledNAN*);
 
   // Entry point of this pass.
   bool runOnModule(Module& M) override;

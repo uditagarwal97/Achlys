@@ -27,6 +27,7 @@
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/IRBuilder.h"
 
 #include <cstdarg>
 #include <ctime>
@@ -49,6 +50,11 @@ static cl::opt<unsigned> Verbose("achlys-verbose", cl::init(0),
                                               2 --> BasicBlock Level Debug\n\
                                               3 --> Instruction Level Debug\n\
                                               4 --> Real-Time Debug\n"));
+
+// CLI command to specify if fault injection is needed or not.
+static cl::opt<bool> doFaultInjection("doFaultInjection", cl::init(false),
+                                   cl::desc("[Achlys Taint Analysis] \
+                                            Enable Fault Injection"));
 
 #include "TaintChecker.h"
 
@@ -625,6 +631,86 @@ namespace achlys {
     return isRetTainted;
   }
 
+  void AchlysTaintChecker::insertFICall(Instruction* ii, Function *f, int id) {
+
+    dprintf(1, "[STEP] Inserting FI call for instruction: ",
+            llvmToString(ii).c_str(), "\n");
+
+    // Insert the FI function
+    IRBuilder<> IRB(ii->getParent());
+    IRB.SetInsertPoint(ii->getNextNode());
+
+    FunctionCallee Fn;
+
+    // Currently, we support FI in only Float, Double, Int, and pointer types.
+    if (ii->getType()->isPointerTy()) {
+      Fn = ii->getFunction()->getParent()->
+                  getOrInsertFunction("injectNANFaultPtr",
+                      ii->getType(),
+                      ii->getType(),
+                      Type::getInt32Ty(ii->getContext()));
+    }
+    else if (ii->getType()->isFloatTy()){
+      Fn = ii->getFunction()->getParent()->
+                  getOrInsertFunction("injectNANFaultFloat",
+                      ii->getType(),
+                      ii->getType(),
+                      Type::getInt32Ty(ii->getContext()));
+    }
+    else if (ii->getType()->isDoubleTy()){
+      Fn = ii->getFunction()->getParent()->
+                  getOrInsertFunction("injectNANFaultDouble",
+                      ii->getType(),
+                      ii->getType(),
+                      Type::getInt32Ty(ii->getContext()));
+    }
+    else if (ii->getType()->isIntegerTy()){
+      Fn = ii->getFunction()->getParent()->
+                  getOrInsertFunction("injectNANFaultInt",
+                      ii->getType(),
+                      ii->getType(),
+                      Type::getInt32Ty(ii->getContext()));
+    }
+    else {
+      dprintf(1, "[WARNING] Skipping FI call injection. Unsupported type: ",
+              llvmToString(ii->getType()).c_str(), "\n");
+      return;
+    }
+
+    // Create constant instruction.
+    ConstantInt* constInt =
+                ConstantInt::get(Type::getInt32Ty(ii->getContext()), id);
+    Value *funret = IRB.CreateCall(Fn, {ii, constInt});
+
+    // Replace all use of the arithmatic instruction with the function
+    // return value
+    auto myIf = [&](Use &operand) {
+        if (isa<CallInst>(operand.getUser()))
+            return false;
+        return true;
+    };
+
+    ii->replaceUsesWithIf(funret, myIf);
+
+    hasIRChanged = true;
+  }
+
+  // Add code for add instrumentations for FI.
+  void AchlysTaintChecker::doFaultInjectionInstrumentation(
+                                            AttackerControlledNAN *nanSources) {
+
+    for (auto item : nanSources->nodeToFunctionMap) {
+      Function* f = item.second;
+      TaintDepGraphNode* nanSourceNode = item.first;
+
+      // Insert FI call right after the nanSource node.
+      if (auto ii = dyn_cast<Instruction>(nanSourceNode->val))
+        insertFICall(ii, f, nanSourceNode->attr.nanSourceNumber);
+      else
+        assert(false && "NanSource node is not an instruction");
+    }
+  }
+
   // Entry point of this pass.
   bool AchlysTaintChecker::runOnModule(Module& M) {
 
@@ -664,7 +750,7 @@ namespace achlys {
     if (funcWorklist.size() == 0) {
       output<<"Could not find main function! Aborting!\n";
       gracefulExit();
-      return false;
+      return hasIRChanged;
     }
     else {
 
@@ -703,8 +789,26 @@ namespace achlys {
     // control flow of the application.
     filterAttackerControlledNANSources(&attackCtrlNAN);
 
+    if (doFaultInjection) {
+      dprintf(1,
+        addColor(
+        "*** Started injecting Fault Injection related instrumentation ***\n",
+        "yellow").
+        c_str());
+
+        doFaultInjectionInstrumentation(&attackCtrlNAN);
+    }
+    else {
+      dprintf(1,
+        addColor(
+        "*** Fault Injection skipped. Turn it on using -doFaultInjection \
+        CLI flag. ***\n",
+        "yellow").
+        c_str());
+    }
+
     gracefulExit();
-    return false;
+    return hasIRChanged;
   }
 
   // Our taint analysis pass depends on these LLVM passes.

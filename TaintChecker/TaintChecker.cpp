@@ -20,6 +20,7 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Pass.h"
+#include "llvm/IR/Type.h"
 
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryDependenceAnalysis.h"
@@ -210,6 +211,12 @@ namespace achlys {
             Value* inpVal = ci->getArgOperand(numArguments - 1);
             fc->checkAndPropagateTaint(inpVal, {});
             depGraph->addTaintSource(inpVal);
+
+            // cin can take float from user. So, it can produce NaN.
+            if (inpVal->getType() == Type::getFloatPtrTy(i->getContext())) {
+
+              depGraph->markValueAsNaNSource(inpVal, true);
+            }
           }
           else {
             fc->checkAndPropagateTaint(ci, {});
@@ -275,18 +282,19 @@ namespace achlys {
   //    - Handle pointers and data structures (Abstract memory model)
   //    - Handle back-tracking and updating taint sets of caller functions.
   void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc) {
-    dprintf(1, "Started Analyzing function: ", F->getName().str().c_str(), "\n");
+    dprintf(1, "[STEP] Started Analyzing function: ",
+            demangle(F->getName().str().c_str()).c_str());
 
     FunctionTaintSet taintSet;
     TaintDepGraph* depGraph;
 
     if (funcTaintSet.find(F) == funcTaintSet.end()) {
-      dprintf(1, "[STEP] Analysing this function for the first time\n");
+      dprintf(1, " for the first time\n");
       depGraph = new TaintDepGraph(F);
       funcTaintSummaryGraph.insert({F, depGraph});
     }
     else {
-      dprintf(1, "[STEP] Analysing this function again. Returning.\n");
+      dprintf(1, " again. Returning.\n");
       taintSet = funcTaintSet[F];
       taintSet.snapshot(); // Just to check if the taint set changes or not.
       depGraph = funcTaintSummaryGraph[F];
@@ -332,7 +340,7 @@ namespace achlys {
     }
 
     taintSet.summarize(4);
-    depGraph->printGraph(1);
+    depGraph->printGraph(2);
 
     // Add the taint set of this function to the global map.
     if (funcTaintSet.find(F) == funcTaintSet.end()){
@@ -343,7 +351,7 @@ namespace achlys {
     }
 
     dprintf(1, "[STEP] Finished Analyzing function: ",
-                F->getName().str().c_str(), "\n");
+                demangle(F->getName().str().c_str()).c_str(), "\n");
   }
 
   // Filter attacker controlled NaN nodes to keep only those that affects the
@@ -351,18 +359,75 @@ namespace achlys {
   void AchlysTaintChecker::filterAttackerControlledNANSources(
                               AttackerControlledNAN *attackCtrlNAN) {
 
-    for (auto it : attackCtrlNAN->nodeToFunctionMap) {
-      TaintDepGraphNode* node = it.first;
-      Function* F = it.second;
+    for (auto ii = attackCtrlNAN->nodeToFunctionMap.begin();
+         ii != attackCtrlNAN->nodeToFunctionMap.end();) {
+
+      auto it = &*ii;
+      TaintDepGraphNode* node = it->first;
+      Function* F = it->second;
 
       if (funcTaintSummaryGraph.find(F) != funcTaintSummaryGraph.end()) {
 
         TaintDepGraph* depGraph = funcTaintSummaryGraph[F];
-        errs()<<*(node->val);
+        bool isValidNaNSource = false;
 
         // Check if any child of this node is a cmp instruction.
         // If yes, then check whether the cmp instruction in a branch instruction.
-        // TODO: Complete this!
+        int nanId = node->attr.nanSourceNumber;
+
+        // If the node is a top-level node, just iterate through its child.
+        if (depGraph->isTopLevelNode(node)) {
+          // Iterate through children to find cmp instructions.
+          for (auto child : node->children) {
+            if(isa<CmpInst>(child->val) &&
+              find(child->attr.derivedNaNSourceId.begin(),
+              child->attr.derivedNaNSourceId.end(), nanId) !=
+              child->attr.derivedNaNSourceId.end()) {
+
+              // Check if this compare instruction is used in a branch isntruction
+              // or not.
+              for (auto user : child->val->users()) {
+                if (isa<BranchInst>(user)) {
+                  isValidNaNSource = true;
+                }
+              }
+            }
+          }
+        }
+        // If this NaN source is a child node, then iterate through all of its
+        // parents.
+        else {
+          for (auto parent : node->children) {
+            for (auto child : parent->children) {
+              // Iterate through all child of all parents to find all cmp instructions
+              // that directly or indirectly depends on this NaN source.
+              if(isa<CmpInst>(child->val) &&
+              find(child->attr.derivedNaNSourceId.begin(),
+              child->attr.derivedNaNSourceId.end(), nanId) !=
+              child->attr.derivedNaNSourceId.end()) {
+
+                // Check if this compare instruction is used in a branch isntruction
+                // or not.
+                for (auto user : child->val->users()) {
+                  if (isa<BranchInst>(user)) {
+                    isValidNaNSource = true;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        if (!isValidNaNSource) {
+          dprintf(1, "[NEW INFO] Removing attacker controlled NaN source: ",
+                  llvmToString(node->val).c_str(), "\n");
+          ii = attackCtrlNAN->nodeToFunctionMap.erase(ii);
+        }
+        else {
+          dprintf(1, "[NEW INFO] Keeping attacker controlled NaN source: ",
+                  llvmToString(node->val).c_str(), "\n");
+          ii++;
+        }
       }
       else
         assert(false && "Function summary graph not found while \
@@ -377,12 +442,12 @@ namespace achlys {
                           AttackerControlledNAN *attackCtrlNAN) {
 
     dprintf(1, "[STEP] Started collapsing constraints for function: ",
-            f->getName().str().c_str(), "\n");
+            demangle(f->getName().str().c_str()).c_str(), "\n");
 
     // Check and get dependencies graph of this function.
     if (funcTaintSummaryGraph.find(f) == funcTaintSummaryGraph.end()) {
       dprintf(1, "[WARNING] No taint summary graph found for function: ",
-              f->getName().str().c_str(), "\n");
+              demangle(f->getName().str().c_str()).c_str(), "\n");
       return false;
     }
 
@@ -392,7 +457,7 @@ namespace achlys {
     // FIXME: Support recursive functions.
     if (funCS->isRecursion(f)) {
       dprintf(1, "[WARNING] Recursive function call found for function: ",
-              f->getName().str().c_str(), "\n");
+              demangle(f->getName().str().c_str()).c_str(), "\n");
       return false;
     }
 
@@ -424,6 +489,12 @@ namespace achlys {
                   to_string(tlNode->attr.argumentNumber).c_str(),"\n");
 
           tlNode->setCurrentStackTaint();
+
+          if (tlNode->nanStatus == TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE) {
+            // If this is a NaN source, then add it to the attacker controlled
+            // NaN sources.
+            attackCtrlNAN->nodeToFunctionMap[tlNode] = f;
+          }
 
           // Mark all child nodes as tainted.
           for (auto childNode : tlNode->children) {
@@ -469,7 +540,7 @@ namespace achlys {
       vector<int> taintedCallArgNumber;
       int numArgument = 0;
 
-      dprintf(3, "Analysing call-site during collapse constraints: ",
+      dprintf(3, "[STEP] Analysing call-site during collapse constraints: ",
               llvmToString(callInst).c_str(), "\n");
 
       for (auto ii = callInst->arg_begin(); ii != callInst->arg_end(); ii++) {
@@ -505,7 +576,7 @@ namespace achlys {
       if (isRetValTainted) {
 
         dprintf(1, "[STEP] Got tainted return value from function: ",
-                calledFunc->getName().str().c_str(), "\n");
+                demangle(calledFunc->getName().str().c_str()).c_str(), "\n");
 
         tlNode->setCurrentStackTaint();
 
@@ -548,8 +619,8 @@ namespace achlys {
     funCS->pop();
 
     dprintf(1, "[STEP] Finished collapsing constraints for function: ",
-            f->getName().str().c_str(), "  Return val tainted ? ",
-            isRetTainted?"true":"false", "\n");
+            demangle(f->getName().str().c_str()).c_str(),
+            "  Return val tainted ? ", isRetTainted?"true":"false", "\n");
 
     return isRetTainted;
   }
@@ -561,7 +632,9 @@ namespace achlys {
           "---------------Starting taint analysis pass-------------------\n");
 
     dprintf(1,
-          "---------------Calculating Function Summaries-------------------\n");
+        addColor(
+        "*** Started Calculating function summaries ***\n", "yellow").
+        c_str());
 
     const clock_t begin_time = clock();
 
@@ -603,8 +676,6 @@ namespace achlys {
         funcWorklist.pop();
 
         analyzeFunction(F, fc);
-        dprintf(1, "funcWorklist size=", to_string(funcWorklist.size()).c_str(),
-               "\n");
       }
     }
 
@@ -613,10 +684,20 @@ namespace achlys {
           "-----------Finished Calculating Function Summaries: time = ",
           to_string(timeTook).c_str()," Seconds \n");
 
+    dprintf(1,
+        addColor(
+        "*** Started Collapsing constraints ***\n", "yellow").
+        c_str());
+
     AttackerControlledNAN attackCtrlNAN;
     FunctionCallStack fcs;
     collapseConstraints(M.getFunction("main"), &fcs, {1, 2},
                         &attackCtrlNAN);
+
+    dprintf(1,
+        addColor(
+        "*** Started Filtering attacker controlled NaN sources ***\n", "yellow").
+        c_str());
 
     // Check which attacker controlled NaN sources can potentially alter the
     // control flow of the application.

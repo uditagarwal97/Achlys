@@ -69,6 +69,37 @@ std::string demangle(const char *name) {
   return (status == 0) ? res.get() : std::string(name);
 }
 
+// Color string for console printing.
+std::string addColor(string s, string color) {
+
+  string color_str;
+
+  if (color == "yellow") {
+    color_str = "\033[1;33m";
+  }
+  else if (color == "red") {
+    color_str = "\033[1;31m";
+  }
+  else if (color == "green") {
+    color_str = "\033[1;32m";
+  }
+  else if (color == "blue") {
+    color_str = "\033[1;34m";
+  }
+  else if (color == "magenta") {
+    color_str = "\033[1;35m";
+  }
+  else if (color == "cyan") {
+    color_str = "\033[1;36m";
+  }
+  else if (color == "white") {
+    color_str = "\033[1;37m";
+  }
+
+  color_str = color_str + s + "\033[0m";
+  return color_str;
+}
+
 // Returns the source code line number cooresponding to the LLVM instruction.
 // Returns -1 if the instruction has no associated Metadata.
 int getSourceCodeLine(Instruction *I) {
@@ -83,6 +114,9 @@ int getSourceCodeLine(Instruction *I) {
 }
 
 /////////////////////////// Supporting Data Structures /////////////////////////
+
+// Give a unique ID to each NaN source.
+int nanSourceCount = 0;
 
 // Structure of dependency graph node.
 // Dependency graph is a directed, 2-level graph, with the top nodes being
@@ -100,13 +134,16 @@ struct TaintDepGraphNode {
     bool isArgumentNode;
     bool isReturnValue;
     int argumentNumber;
+    int nanSourceNumber;
     vector<Value*> callNodeArgs;
+    set<int> derivedNaNSourceId;
 
     attributes() {
       isReturnCallNode = false;
       isArgumentNode = false;
       isReturnValue = false;
       argumentNumber = -1;
+      nanSourceNumber = -1;
     }
   } attr;
 
@@ -160,11 +197,21 @@ struct TaintDepGraph {
   }
 
   void addFunctionArgument(Value* v, int argNum) {
+
+    // Check if the function argument is constant or not.
+    if(isa<Constant>(v))
+      return;
+
     TaintDepGraphNode *node = new TaintDepGraphNode(v);
     node->attr.isArgumentNode = true;
     node->type = TaintDepGraphNode::NodeType::POS_TAINT_SOURCE;
     node->attr.argumentNumber = argNum;
     valToNodeMap.insert({v, node});
+
+    if (v->getType()->isFloatTy() || v->getType()->isDoubleTy()) {
+      node->nanStatus = TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE;
+      node->attr.nanSourceNumber = ++nanSourceCount;
+    }
 
     addTopLevelNode(node);
   }
@@ -184,9 +231,14 @@ struct TaintDepGraph {
     return false;
   }
 
-  void markValueAsNaNSource(Value* v) {
-    if(valToNodeMap.find(v) != valToNodeMap.end())
+  void markValueAsNaNSource(Value* v, bool isDefTaintSource = false) {
+    if(valToNodeMap.find(v) != valToNodeMap.end()) {
       valToNodeMap[v]->nanStatus = TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE;
+      valToNodeMap[v]->attr.nanSourceNumber = ++nanSourceCount;
+
+      if (isDefTaintSource)
+        valToNodeMap[v]->type = TaintDepGraphNode::NodeType::DEF_TAINT_SOURCE;
+    }
   }
 
   // Add valToBeTainted to the graph, if atleast one of the value in dependsVals
@@ -200,6 +252,7 @@ struct TaintDepGraph {
     bool isTainted = false;
     bool isAnyDepNaN = false;
     vector<Value*> taintDepSet;
+    set<int> nanSourceDepSet;
 
     for (Value* v : dependVals) {
       if (valToNodeMap.find(v) != valToNodeMap.end()) {
@@ -207,11 +260,19 @@ struct TaintDepGraph {
 
         // Check if any dependency is NaN.
         if (valToNodeMap[v]->nanStatus ==
-            TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE ||
-            valToNodeMap[v]->nanStatus ==
-            TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
+            TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE) {
+
+          nanSourceDepSet.insert(valToNodeMap[v]->attr.nanSourceNumber);
           isAnyDepNaN = true;
         }
+        else if (valToNodeMap[v]->nanStatus ==
+            TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
+
+          isAnyDepNaN = true;
+          nanSourceDepSet.insert(valToNodeMap[v]->attr.derivedNaNSourceId.begin(),
+                                 valToNodeMap[v]->attr.derivedNaNSourceId.end());
+        }
+
         taintDepSet.push_back(v);
       }
     }
@@ -222,8 +283,11 @@ struct TaintDepGraph {
       node->type = TaintDepGraphNode::NodeType::POS_TAINT_VAR;
       valToNodeMap.insert({valToBeTainted, node});
 
-      if (isAnyDepNaN)
+      if (isAnyDepNaN) {
         node->nanStatus = TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN;
+        node->attr.derivedNaNSourceId.insert(nanSourceDepSet.begin(),
+                                            nanSourceDepSet.end());
+      }
 
       for (Value* v : taintDepSet) {
         TaintDepGraphNode *vNode = valToNodeMap[v];
@@ -354,7 +418,8 @@ struct TaintDepGraph {
         dprintf(logLevel, " \033[0;31m (Return value) \033[0m");
       }
       else if (node->nanStatus == TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE) {
-        dprintf(logLevel, " \033[0;31m (NaN source) \033[0m");
+        dprintf(logLevel, " \033[0;31m (NaN source) Id=",
+                  to_string(node->attr.nanSourceNumber).c_str(), " \033[0m");
       }
       else if (node->nanStatus ==
                TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
@@ -373,7 +438,8 @@ struct TaintDepGraph {
         }
         else if (child->nanStatus ==
                 TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE) {
-          dprintf(logLevel, " \033[0;31m (NaN source) \033[0m");
+          dprintf(logLevel, " \033[0;31m (NaN source) Id=",
+                  to_string(child->attr.nanSourceNumber).c_str(), " \033[0m");
         }
         else if (child->nanStatus ==
                 TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {

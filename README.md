@@ -14,7 +14,7 @@ Achlys is a tool for automatic detection of NaN poisoning vulnerabilities in C/C
 Run `./build.sh` from the root directory of this repository every time you make a change to TaintChecker
 
 ### Run Benchmark
-- `cd Benchmarks/synthetic/testBasic/
+- `cd Benchmarks/synthetic/testBasic/`
 - Compile cpp to LLVM IR using `./compile.sh`
 - Enable/Disable Verbose Flag and run pass using `./runPass.sh`
 

@@ -539,6 +539,7 @@ struct FunctionTaintSet {
 
   // Has the FunctionTaintSet changed!
   bool hasChanged;
+  bool loopTaintsChanged;
 
   // Mark the 'val' as return value of this function.
   void markThisValueAsReturnValue(Value* val) {
@@ -587,8 +588,15 @@ struct FunctionTaintSet {
     if (isUnConditionalTaint) depends = {};
 
     if (isTaint) {
+      vector<Value*> oldDepends;
+      if(taintSet.count(valueToBeTainted) == 0)
+        loopTaintsChanged = true;
+      else
+        oldDepends = taintSet[valueToBeTainted];
       taintSet.insert({valueToBeTainted, depends});
       hasChanged = true;
+      if (oldDepends != depends)
+        loopTaintsChanged = true;
     }
   }
 
@@ -628,6 +636,10 @@ struct FunctionTaintSet {
 
   void snapshot() {
     hasChanged = false;
+  }
+
+  void snapshotLoopTaints() {
+    loopTaintsChanged = false;
   }
 
   void summarize(int logLevel) {
@@ -768,6 +780,12 @@ struct AchlysTaintChecker : public ModulePass {
   void analyzeInstruction(Instruction*, FunctionTaintSet*,
                           FunctionContext, TaintDepGraph*);
 
+  // Analyze each instruction one by one. Essentially, this function will apply
+  // taint propogation and eviction policies on each instruction.
+  void analyzeBasicBlock(BasicBlock*, FunctionTaintSet*,
+                          FunctionContext, TaintDepGraph*);
+  void analyzeLoop(BasicBlock*, FunctionTaintSet*, FunctionContext,
+                    LoopInfo &loopInfo, TaintDepGraph*);
   // Analyze each function one by one. We will use a lattice-based fixpoint
   // iterative, inter-procedural data flow analysis.
   // TODO:

@@ -15,6 +15,7 @@ Run `./build.sh` from the root directory of this repository every time you make 
 
 ### Run Benchmark
 - `cd Benchmarks/synthetic/testBasic/`
+- Ensure that ACHLYS environment variables are loaded using `../../../init.sh`
 - Compile cpp to LLVM IR using `./compile.sh`
 - Enable/Disable Verbose Flag and run pass using `./runPass.sh`
 

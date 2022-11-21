@@ -281,6 +281,45 @@ namespace achlys {
     dprintf(3, "[STEP] Finish Analyzing instruction: ", llvmToString(i).c_str(), "\n");
   }
 
+  //  Analyzes instructions in a single basic block
+  void AchlysTaintChecker::analyzeBasicBlock(BasicBlock *bb, FunctionTaintSet* taintSet,
+                          FunctionContext fc, TaintDepGraph* depGraph)
+  {
+      dprintf(2, "[BasicBlock] Analyzing Basic Block ", bb->getName().data(), "\n");
+      for (auto ii = bb->begin(); ii != bb->end(); ii++) {
+        Instruction* ins = &(*ii);
+        analyzeInstruction(ins, taintSet, fc, depGraph);
+      }
+  }
+
+  // Recursively analyzes basic block till taintSet does not change
+  void AchlysTaintChecker::analyzeLoop(BasicBlock *bb, FunctionTaintSet* taintSet, FunctionContext fc,
+                          LoopInfo &loopInfo, TaintDepGraph* depGraph) {
+    // Create a copy of taintSet, analyzeAll loop basic blocks and compare with original taintSet
+    // If has changed, continue for another iteration, else stop
+    dprintf(2, "[LOOP] Analyzing Loop starting with ", bb->getName().data(), "\n");
+    unsigned int depth = loopInfo.getLoopDepth(bb);
+
+    int loopUnrollCount = 0;
+    while(taintSet->loopTaintsChanged){
+      ++loopUnrollCount;
+      dprintf(2, "\033[0;33m [LOOP] Unroll Count: \033[0m", to_string(loopUnrollCount).c_str(), "\n");
+
+      taintSet->snapshotLoopTaints();
+      BasicBlock* currBlock = bb;
+      unsigned int loopUnrolls = 0;
+      while(currBlock != nullptr){
+        if(loopInfo.getLoopDepth(currBlock) == depth)
+          analyzeBasicBlock(currBlock, taintSet, fc, depGraph);
+        else if(loopInfo.getLoopDepth(currBlock) < depth)
+          break;
+        else if(loopInfo.getLoopDepth(currBlock) > depth)
+          analyzeLoop(currBlock, taintSet, fc, loopInfo, depGraph);
+        currBlock = currBlock->getNextNode();
+      }
+    }
+  }
+
   // Analyze each function one by one. We will use a lattice-based fixpoint
   // iterative, inter-procedural data flow analysis.
   // TODO:
@@ -335,13 +374,24 @@ namespace achlys {
       }
     }
 
+    LoopInfo &loopInfo = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
+
     // Now, do the reverse post-order traversal of all the basic blocks of
     // this function
     for (BasicBlock *bb : llvm::ReversePostOrderTraversal<llvm::Function*>(F)) {
-      for (auto ii = bb->begin(); ii != bb->end(); ii++) {
 
-        Instruction* ins = &(*ii);
-        analyzeInstruction(ins, &taintSet, fc, depGraph);
+      // If not a loop => analzye basic block
+      if (loopInfo.getLoopDepth(bb)==0){
+        dprintf(2, "[NON_LOOP] Non-loop basic block ", bb->getName().data(), "\n");
+        analyzeBasicBlock(bb, &taintSet, fc, depGraph);
+      }
+      // Should we check for loopHeader? loopInfo.isLoopHeader(bb)==true
+      else if (loopInfo.isLoopHeader(bb)==true){
+        analyzeLoop(bb, &taintSet, fc, loopInfo, depGraph);
+      }
+      else {
+        dprintf(2, "[ERROR] Not analyzing this block, please recheck ",
+          bb->getName().data(), " with depth ", to_string(loopInfo.getLoopDepth(bb)).c_str(),"\n");
       }
     }
 

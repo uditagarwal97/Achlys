@@ -1,3 +1,4 @@
 *.ll
 build/
 llvm-project-*
+.vscode/

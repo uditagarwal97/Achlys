@@ -137,13 +137,11 @@ namespace achlys {
       if ((opcode == Instruction::SDiv || opcode == Instruction::FDiv) &&
             depGraph->isTainted(secondOperand) &&
             depGraph->isTainted(firstOperand)) {
-          errs() << "Checking for NaN source"<< "\n";
 
           fc->addNaNSource(bo);
           fc->checkAndPropagateTaint(bo, {secondOperand, firstOperand});
           depGraph->checkAndPropogateTaint(bo, {secondOperand, firstOperand});
           depGraph->markValueAsNaNSource(bo);
-          errs() << "Marked values in dep graph"<< "\n";
       }
     }
 

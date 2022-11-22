@@ -23,17 +23,11 @@ int main(int argc, char **argv)
     for (int i = 0; i < 10; i++)
     {
         a = b;
-        b = c;
-        c = initial_taint;
-        // c = i;
+        for (int j = 0; j < 10; j++)
+        {
+            b = c;
+            c = initial_taint;
+        }
     }
-
-    // int i = 0;
-    // while(i++ < 10){
-    //     a = b;
-    //     b = initial_taint;
-    // }
-
-    // c = 20.0;
     return 0;
 }

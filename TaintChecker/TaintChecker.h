@@ -539,7 +539,7 @@ struct FunctionTaintSet {
 
   // Has the FunctionTaintSet changed!
   bool hasChanged;
-  bool loopTaintsChanged;
+  stack<bool> loopTaintsChanged; // For loop at each depth, track if the taints changed. First pushed is root loop.
 
   // Mark the 'val' as return value of this function.
   void markThisValueAsReturnValue(Value* val) {
@@ -589,14 +589,20 @@ struct FunctionTaintSet {
 
     if (isTaint) {
       vector<Value*> oldDepends;
+      bool taintChanged = false;
       if(taintSet.count(valueToBeTainted) == 0)
-        loopTaintsChanged = true;
+        taintChanged = true;
       else
         oldDepends = taintSet[valueToBeTainted];
       taintSet.insert({valueToBeTainted, depends});
       hasChanged = true;
       if (oldDepends != depends)
-        loopTaintsChanged = true;
+        taintChanged = true;
+      if(taintChanged){
+        loopTaintsChanged.pop();
+        loopTaintsChanged.top() = true;
+        loopTaintsChanged.push(true);
+      }
     }
   }
 
@@ -638,8 +644,20 @@ struct FunctionTaintSet {
     hasChanged = false;
   }
 
-  void snapshotLoopTaints() {
-    loopTaintsChanged = false;
+  bool getCurrentLoopTaintsChanged() {
+    return loopTaintsChanged.top();
+  }
+
+  void resetCurrentLoopTaintsChanged() {
+    loopTaintsChanged.top() = false;
+  }
+
+  void trackNewLoop() {
+    loopTaintsChanged.push(true);
+  }
+
+  void finishTrackingLoop() {
+    loopTaintsChanged.pop();
   }
 
   void summarize(int logLevel) {

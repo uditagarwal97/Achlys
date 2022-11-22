@@ -2,3 +2,5 @@
 build/
 llvm-project-*
 .vscode/
+*.txt
+*.out

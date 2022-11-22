@@ -117,7 +117,7 @@ namespace achlys {
       depGraph->checkAndPropogateTaint(gep, {val});
     }
 
-    // Hanlde Binary operator like add, sub, mul, div, fdiv, etc.
+    // Handle Binary operator like add, sub, mul, div, fdiv, etc.
     // Operation like div can produce NaNs as well, beware!
     else if (auto bo = dyn_cast<BinaryOperator>(i)) {
 
@@ -137,11 +137,13 @@ namespace achlys {
       if ((opcode == Instruction::SDiv || opcode == Instruction::FDiv) &&
             depGraph->isTainted(secondOperand) &&
             depGraph->isTainted(firstOperand)) {
+          errs() << "Checking for NaN source"<< "\n";
 
           fc->addNaNSource(bo);
           fc->checkAndPropagateTaint(bo, {secondOperand, firstOperand});
           depGraph->checkAndPropogateTaint(bo, {secondOperand, firstOperand});
           depGraph->markValueAsNaNSource(bo);
+          errs() << "Marked values in dep graph"<< "\n";
       }
     }
 
@@ -294,30 +296,36 @@ namespace achlys {
 
   // Recursively analyzes basic block till taintSet does not change
   void AchlysTaintChecker::analyzeLoop(BasicBlock *bb, FunctionTaintSet* taintSet, FunctionContext fc,
-                          LoopInfo &loopInfo, TaintDepGraph* depGraph) {
-    // Create a copy of taintSet, analyzeAll loop basic blocks and compare with original taintSet
-    // If has changed, continue for another iteration, else stop
-    dprintf(2, "[LOOP] Analyzing Loop starting with ", bb->getName().data(), "\n");
+                          LoopInfo &loopInfo, TaintDepGraph* depGraph)
+  {
     unsigned int depth = loopInfo.getLoopDepth(bb);
-
+    taintSet->trackNewLoop();
+    dprintf(2, "\033[0;33m [LOOP] Started analyzing Loop starting with \033[0m", bb->getName().data(),
+            " with a depth of ", to_string(depth).c_str(), "\n");
     int loopUnrollCount = 0;
-    while(taintSet->loopTaintsChanged){
+    while(taintSet->getCurrentLoopTaintsChanged()){
       ++loopUnrollCount;
-      dprintf(2, "\033[0;33m [LOOP] Unroll Count: \033[0m", to_string(loopUnrollCount).c_str(), "\n");
+      dprintf(2, "\033[0;33m [LOOP] Unroll Count: \033[0m", to_string(loopUnrollCount).c_str(),
+            " for depth of ", to_string(depth).c_str(), "\n");
 
-      taintSet->snapshotLoopTaints();
+      taintSet->resetCurrentLoopTaintsChanged();
       BasicBlock* currBlock = bb;
       unsigned int loopUnrolls = 0;
-      while(currBlock != nullptr){
+      while(currBlock != nullptr && loopInfo.getLoopDepth(currBlock) >= depth){
         if(loopInfo.getLoopDepth(currBlock) == depth)
           analyzeBasicBlock(currBlock, taintSet, fc, depGraph);
-        else if(loopInfo.getLoopDepth(currBlock) < depth)
-          break;
-        else if(loopInfo.getLoopDepth(currBlock) > depth)
+        else if(loopInfo.isLoopHeader(currBlock)==true)
           analyzeLoop(currBlock, taintSet, fc, loopInfo, depGraph);
+        else
+          dprintf(2, "[SKIP] Skipping Basic Block ", currBlock->getName().data(),
+          " with depth ", to_string(loopInfo.getLoopDepth(currBlock)).c_str(),"\n");
         currBlock = currBlock->getNextNode();
       }
     }
+    taintSet->finishTrackingLoop();
+    dprintf(2, to_string(taintSet->loopTaintsChanged.size()).c_str(), "\n");
+    dprintf(2, "\033[0;33m [LOOP] Finished analyzing Loop starting with  \033[0m", bb->getName().data(),
+            " with a depth of ", to_string(depth).c_str(), "\n");
   }
 
   // Analyze each function one by one. We will use a lattice-based fixpoint
@@ -386,11 +394,11 @@ namespace achlys {
         analyzeBasicBlock(bb, &taintSet, fc, depGraph);
       }
       // Should we check for loopHeader? loopInfo.isLoopHeader(bb)==true
-      else if (loopInfo.isLoopHeader(bb)==true){
+      else if (loopInfo.isLoopHeader(bb)==true && loopInfo.getLoopDepth(bb)==1){
         analyzeLoop(bb, &taintSet, fc, loopInfo, depGraph);
       }
       else {
-        dprintf(2, "[ERROR] Not analyzing this block, please recheck ",
+        dprintf(2, "[SKIP] Already Analyzed Basic Block ",
           bb->getName().data(), " with depth ", to_string(loopInfo.getLoopDepth(bb)).c_str(),"\n");
       }
     }

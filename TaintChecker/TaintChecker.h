@@ -590,17 +590,24 @@ struct FunctionTaintSet {
     if (isTaint) {
       vector<Value*> oldDepends;
       bool taintChanged = false;
+
       if(taintSet.count(valueToBeTainted) == 0)
         taintChanged = true;
       else
         oldDepends = taintSet[valueToBeTainted];
+
       taintSet.insert({valueToBeTainted, depends});
       hasChanged = true;
+
       if (oldDepends != depends)
         taintChanged = true;
-      if(taintChanged){
+
+      if(taintChanged && loopTaintsChanged.size() > 0){
         loopTaintsChanged.pop();
-        loopTaintsChanged.top() = true;
+
+        if (loopTaintsChanged.size() > 0)
+          loopTaintsChanged.top() = true;
+
         loopTaintsChanged.push(true);
       }
     }
@@ -703,6 +710,9 @@ struct AchlysTaintChecker : public ModulePass {
 
   // Cache results for inter-procedural alias analysis.
   AAResults *aliasAnalysisResult;
+
+  // Results for memory dependency analysis pass.
+  MemoryDependenceResults *memDepResult;
 
   // If IR has changed.
   bool hasIRChanged;

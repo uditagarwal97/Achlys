@@ -23,11 +23,11 @@
 #include "llvm/IR/Type.h"
 
 #include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/MemoryDependenceAnalysis.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/Analysis/MemoryDependenceAnalysis.h"
 
 #include <cstdarg>
 #include <ctime>
@@ -298,12 +298,12 @@ namespace achlys {
   {
     unsigned int depth = loopInfo.getLoopDepth(bb);
     taintSet->trackNewLoop();
-    dprintf(2, "\033[0;33m [LOOP] Started analyzing Loop starting with \033[0m", bb->getName().data(),
+    dprintf(2, "\033[0;33m[LOOP] Started analyzing Loop starting with \033[0m", bb->getName().data(),
             " with a depth of ", to_string(depth).c_str(), "\n");
     int loopUnrollCount = 0;
     while(taintSet->getCurrentLoopTaintsChanged()){
       ++loopUnrollCount;
-      dprintf(2, "\033[0;33m [LOOP] Unroll Count: \033[0m", to_string(loopUnrollCount).c_str(),
+      dprintf(2, "\033[0;33m[LOOP] Unroll Count: \033[0m", to_string(loopUnrollCount).c_str(),
             " for depth of ", to_string(depth).c_str(), "\n");
 
       taintSet->resetCurrentLoopTaintsChanged();
@@ -322,7 +322,7 @@ namespace achlys {
     }
     taintSet->finishTrackingLoop();
     dprintf(2, to_string(taintSet->loopTaintsChanged.size()).c_str(), "\n");
-    dprintf(2, "\033[0;33m [LOOP] Finished analyzing Loop starting with  \033[0m", bb->getName().data(),
+    dprintf(2, "\033[0;33m[LOOP] Finished analyzing Loop starting with  \033[0m", bb->getName().data(),
             " with a depth of ", to_string(depth).c_str(), "\n");
   }
 
@@ -338,6 +338,11 @@ namespace achlys {
 
     FunctionTaintSet taintSet;
     TaintDepGraph* depGraph;
+
+    // Init results from alias analysis pass for this function.
+    getAnalysis<AAResultsWrapperPass>(*F).doInitialization(*(F->getParent()));
+    aliasAnalysisResult = &(getAnalysis<AAResultsWrapperPass>(*F).getAAResults());
+    memDepResult = &(getAnalysis<MemoryDependenceWrapperPass>(*F).getMemDep());
 
     if (funcTaintSet.find(F) == funcTaintSet.end()) {
       dprintf(1, " for the first time\n");
@@ -785,9 +790,6 @@ namespace achlys {
 
       if (isUserDefinedFunction(F) && F.getName().str().compare("main") == 0) {
 
-        // Init results from alias analysis pass for this function.
-        aliasAnalysisResult = &(getAnalysis<AAResultsWrapperPass>(F).getAAResults());
-
         // main() function takes 2 arguments or none
         if (F.arg_size() == 0) {
           funcWorklist.push({&F, {nullptr, nullptr, {0}}});
@@ -857,8 +859,8 @@ namespace achlys {
     else {
       dprintf(1,
         addColor(
-        "*** Fault Injection skipped. Turn it on using -doFaultInjection \
-        CLI flag. ***\n",
+        "*** Fault Injection skipped. Turn it on using -doFaultInjection "
+        "CLI flag. ***\n",
         "yellow").
         c_str());
     }
@@ -869,7 +871,7 @@ namespace achlys {
 
   // Our taint analysis pass depends on these LLVM passes.
   void AchlysTaintChecker::getAnalysisUsage(AnalysisUsage &AU) const {
-    AU.setPreservesAll();
+    AU.setPreservesCFG();
     AU.addRequired<AAResultsWrapperPass>();
     AU.addRequired<MemoryDependenceWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();

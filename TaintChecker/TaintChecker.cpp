@@ -99,6 +99,25 @@ namespace achlys {
       // Where are you loading from?
       auto loadLocation = li->getOperand(0);
 
+      // Check for mmemory dependence between this load and previous store
+      // instructions that store something at this memory location.
+      SmallVector<NonLocalDepResult, 4> NLDep;
+      memDepResult->getNonLocalPointerDependency(li, NLDep);
+
+      for (auto res : NLDep) {
+        if (res.getResult().isClobber() || res.getResult().isDef()) {
+
+          Instruction* ins = res.getResult().getInst();
+          if (auto ssi = dyn_cast<StoreInst>(ins)) {
+            dprintf(3, "[MEM_DEP] Found at inst: ",llvmToString(ins).c_str(),"\n");
+            // What are you storing?
+            auto valToStore = ssi->getOperand(0);
+            fc->checkAndPropagateTaint(li, {valToStore});
+            depGraph->checkAndPropogateTaint(li, {valToStore});
+          }
+        }
+      }
+
       // [Taint Propogation] If you are loading from a tainted location, mark
       // loaded value as tainted as well.
       fc->checkAndPropagateTaint(li, {loadLocation});

@@ -13,14 +13,14 @@ int main(int argc, char **argv) {
   int *third_pointer = (int *)(static_arr + 2);
   *(third_pointer) = 10;
 
-  // int* dyn_arr = (int*)malloc(10*sizeof(int));
-  // dyn_arr[0] = static_arr[4];
-  // int* last_ele = &dyn_arr[9];
-  // if (argc != 2) {
-  //     cout<<"Pass an int\n. Aborting.\n";
-  //     exit(1);
-  // }
-  // *(last_ele) = stoi(argv[1]);
+  int *dyn_arr = (int *)malloc(10 * sizeof(int));
+  dyn_arr[0] = static_arr[4];
+  int *last_ele = &dyn_arr[9];
+  if (argc != 2) {
+    cout << "Pass an int\n. Aborting.\n";
+    exit(1);
+  }
+  *(last_ele) = stoi(argv[1]);
 
   return 0;
 }

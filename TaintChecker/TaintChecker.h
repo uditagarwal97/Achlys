@@ -106,6 +106,48 @@ int getSourceCodeLine(Instruction *I) {
 }
 
 /////////////////////////// Supporting Data Structures /////////////////////////
+// This data structure is used to store the pointer tree
+// Each node has a list of pointers that derived from the same base pointer
+// Each node also point to its parent
+struct PtrDepTreeNode {
+  Value *val;
+
+  PtrDepTreeNode *parent;
+  std::vector<PtrDepTreeNode *> children;
+
+  bool isTaintedInCurrentStack;
+
+  // Constructor
+  PtrDepTreeNode(Value *v)
+      : val(v), isTaintedInCurrentStack(false), parent(NULL) {}
+
+  void addParent(PtrDepTreeNode *node) { parent = node; }
+
+  void addChild(PtrDepTreeNode *node) { children.push_back(node); }
+
+  void printPtrNode() {
+    dprintf(1, "--> The current inst is : ", llvmToString(val).c_str(), "\n");
+  }
+};
+
+struct PtrDepTree {
+  std::vector<PtrDepTreeNode *> top_base_pointers;
+
+  // Constructor
+  PtrDepTree() {}
+
+  void addToTop(PtrDepTreeNode *node) { top_base_pointers.push_back(node); }
+
+  void printTopBasePtrList() {
+    dprintf(1, "*********** start print current top level base pointers "
+               "*************\n");
+    for (int i = 0; i < top_base_pointers.size(); i++) {
+      top_base_pointers[i]->printPtrNode();
+    }
+    dprintf(1, "*********** end print current top level base pointers "
+               "*************\n");
+  }
+};
 
 // Give a unique ID to each NaN source.
 int nanSourceCount = 0;
@@ -681,6 +723,12 @@ struct AchlysTaintChecker : public ModulePass {
   // Mapping between a function and its Taint Summary Graph.
   unordered_map<Function *, TaintDepGraph *> funcTaintSummaryGraph;
 
+  // Mapping between a derived pointer and its base pointer.
+  unordered_map<Value *, Value *> pointerSet;
+
+  // The tree to store all derived pointers to its base pointers
+  PtrDepTree *ptrTree = new PtrDepTree();
+
   // Cache results for inter-procedural alias analysis.
   AAResults *aliasAnalysisResult;
 
@@ -693,6 +741,8 @@ struct AchlysTaintChecker : public ModulePass {
   // Constructor
   static char ID;
   AchlysTaintChecker() : ModulePass(ID), hasIRChanged(false) {}
+
+  // tranverse the map to construct the tree
 
   // Check if a binary instruction is constant or not.
   // a - a, a xor a, a X 0, a / a are all constant instructions.

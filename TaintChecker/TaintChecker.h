@@ -2,21 +2,21 @@
  *
  * Taint Analysis for Achlys.
  * Author(s): Udit Kumar Agarwal
-*/
-#include "llvm/Support/raw_ostream.h"
+ */
 #include "llvm/IR/Function.h"
+#include "llvm/Support/raw_ostream.h"
 
-#include <cxxabi.h>
-#include <iostream>
-#include <string>
-#include <queue>
-#include <vector>
-#include <set>
 #include <cassert>
+#include <cxxabi.h>
+#include <initializer_list>
+#include <iostream>
+#include <queue>
+#include <set>
 #include <stack>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <initializer_list>
+#include <vector>
 
 // Output strings for debugging
 std::string debug_str;
@@ -36,10 +36,9 @@ void dprint(unsigned v, int numArgs, ...) {
   va_start(vl, numArgs);
   for (int i = 0; i < numArgs; i++) {
     if (Verbose == 4) {
-      errs()<<va_arg(vl, char*);
-    }
-    else if (v <= Verbose) {
-      debug<<va_arg(vl, char*);
+      errs() << va_arg(vl, char *);
+    } else if (v <= Verbose) {
+      debug << va_arg(vl, char *);
     }
   }
   va_end(vl);
@@ -47,8 +46,7 @@ void dprint(unsigned v, int numArgs, ...) {
 
 // Convert any LLVM op=bject to C string.
 // Useful for console printing.
-template<typename T>
-string llvmToString(T *val) {
+template <typename T> string llvmToString(T *val) {
 
   std::string temp;
   raw_string_ostream temp_ostream(temp);
@@ -76,23 +74,17 @@ std::string addColor(string s, string color) {
 
   if (color == "yellow") {
     color_str = "\033[1;33m";
-  }
-  else if (color == "red") {
+  } else if (color == "red") {
     color_str = "\033[1;31m";
-  }
-  else if (color == "green") {
+  } else if (color == "green") {
     color_str = "\033[1;32m";
-  }
-  else if (color == "blue") {
+  } else if (color == "blue") {
     color_str = "\033[1;34m";
-  }
-  else if (color == "magenta") {
+  } else if (color == "magenta") {
     color_str = "\033[1;35m";
-  }
-  else if (color == "cyan") {
+  } else if (color == "cyan") {
     color_str = "\033[1;36m";
-  }
-  else if (color == "white") {
+  } else if (color == "white") {
     color_str = "\033[1;37m";
   }
 
@@ -124,9 +116,13 @@ int nanSourceCount = 0;
 // the tainted variables or pointers that depends on the top nodes.
 struct TaintDepGraphNode {
   Value *val;
-  enum NodeType {UNKNOWN, DEF_TAINT_SOURCE, POS_TAINT_SOURCE, POS_TAINT_VAR}
-                type;
-  enum NodeNaNStatus {NAN_UNKNOWN, NAN_SOURCE, TAINTED_NAN} nanStatus;
+  enum NodeType {
+    UNKNOWN,
+    DEF_TAINT_SOURCE,
+    POS_TAINT_SOURCE,
+    POS_TAINT_VAR
+  } type;
+  enum NodeNaNStatus { NAN_UNKNOWN, NAN_SOURCE, TAINTED_NAN } nanStatus;
 
   // Debug attributes for this node.
   struct attributes {
@@ -135,7 +131,7 @@ struct TaintDepGraphNode {
     bool isReturnValue;
     int argumentNumber;
     int nanSourceNumber;
-    vector<Value*> callNodeArgs;
+    vector<Value *> callNodeArgs;
     set<int> derivedNaNSourceId;
 
     attributes() {
@@ -160,32 +156,25 @@ struct TaintDepGraphNode {
       children.push_back(node);
   }
 
-  bool isNaNSource() {
-    return (nanStatus == NAN_SOURCE);
-  }
+  bool isNaNSource() { return (nanStatus == NAN_SOURCE); }
 
-  // These functions are used to store taint information during inter-procedural,
-  // context-sensitive analysis.
-  void setCurrentStackTaint() {
-    isTaintedInCurrentStack = true;
-  }
+  // These functions are used to store taint information during
+  // inter-procedural, context-sensitive analysis.
+  void setCurrentStackTaint() { isTaintedInCurrentStack = true; }
 
-  bool isNodeTaintedInCurrentStack() {
-    return isTaintedInCurrentStack;
-  }
+  bool isNodeTaintedInCurrentStack() { return isTaintedInCurrentStack; }
 
-  void resetCurrentCallStack() {
-    isTaintedInCurrentStack = false;
-  }
+  void resetCurrentCallStack() { isTaintedInCurrentStack = false; }
 
-  TaintDepGraphNode(Value *v) : val(v), type(UNKNOWN), nanStatus(NAN_UNKNOWN),
-                                isTaintedInCurrentStack(false) {}
+  TaintDepGraphNode(Value *v)
+      : val(v), type(UNKNOWN), nanStatus(NAN_UNKNOWN),
+        isTaintedInCurrentStack(false) {}
 };
 
 // Structure of taint summary graph.
 struct TaintDepGraph {
   std::vector<TaintDepGraphNode *> topLevelNodes;
-  std::unordered_map<Value*, TaintDepGraphNode *> valToNodeMap;
+  std::unordered_map<Value *, TaintDepGraphNode *> valToNodeMap;
   std::vector<TaintDepGraphNode *> callSiteReturnNode;
 
   Function *F;
@@ -196,10 +185,10 @@ struct TaintDepGraph {
     topLevelNodes.push_back(node);
   }
 
-  void addFunctionArgument(Value* v, int argNum) {
+  void addFunctionArgument(Value *v, int argNum) {
 
     // Check if the function argument is constant or not.
-    if(isa<Constant>(v))
+    if (isa<Constant>(v))
       return;
 
     TaintDepGraphNode *node = new TaintDepGraphNode(v);
@@ -216,8 +205,8 @@ struct TaintDepGraph {
     addTopLevelNode(node);
   }
 
-  bool isTainted(Value* v) {
-    if(valToNodeMap.find(v) != valToNodeMap.end())
+  bool isTainted(Value *v) {
+    if (valToNodeMap.find(v) != valToNodeMap.end())
       return true;
 
     return false;
@@ -231,8 +220,8 @@ struct TaintDepGraph {
     return false;
   }
 
-  void markValueAsNaNSource(Value* v, bool isDefTaintSource = false) {
-    if(valToNodeMap.find(v) != valToNodeMap.end()) {
+  void markValueAsNaNSource(Value *v, bool isDefTaintSource = false) {
+    if (valToNodeMap.find(v) != valToNodeMap.end()) {
       valToNodeMap[v]->nanStatus = TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE;
       valToNodeMap[v]->attr.nanSourceNumber = ++nanSourceCount;
 
@@ -243,7 +232,8 @@ struct TaintDepGraph {
 
   // Add valToBeTainted to the graph, if atleast one of the value in dependsVals
   // is tainted.
-  void checkAndPropogateTaint(Value* valToBeTainted, vector<Value*> dependVals){
+  void checkAndPropogateTaint(Value *valToBeTainted,
+                              vector<Value *> dependVals) {
 
     // check if valToBeTainted is already tainted.
     if (valToNodeMap.find(valToBeTainted) != valToNodeMap.end())
@@ -251,10 +241,10 @@ struct TaintDepGraph {
 
     bool isTainted = false;
     bool isAnyDepNaN = false;
-    vector<Value*> taintDepSet;
+    vector<Value *> taintDepSet;
     set<int> nanSourceDepSet;
 
-    for (Value* v : dependVals) {
+    for (Value *v : dependVals) {
       if (valToNodeMap.find(v) != valToNodeMap.end()) {
         isTainted = true;
 
@@ -264,13 +254,13 @@ struct TaintDepGraph {
 
           nanSourceDepSet.insert(valToNodeMap[v]->attr.nanSourceNumber);
           isAnyDepNaN = true;
-        }
-        else if (valToNodeMap[v]->nanStatus ==
-            TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
+        } else if (valToNodeMap[v]->nanStatus ==
+                   TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
 
           isAnyDepNaN = true;
-          nanSourceDepSet.insert(valToNodeMap[v]->attr.derivedNaNSourceId.begin(),
-                                 valToNodeMap[v]->attr.derivedNaNSourceId.end());
+          nanSourceDepSet.insert(
+              valToNodeMap[v]->attr.derivedNaNSourceId.begin(),
+              valToNodeMap[v]->attr.derivedNaNSourceId.end());
         }
 
         taintDepSet.push_back(v);
@@ -286,13 +276,13 @@ struct TaintDepGraph {
       if (isAnyDepNaN) {
         node->nanStatus = TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN;
         node->attr.derivedNaNSourceId.insert(nanSourceDepSet.begin(),
-                                            nanSourceDepSet.end());
+                                             nanSourceDepSet.end());
       }
 
-      for (Value* v : taintDepSet) {
+      for (Value *v : taintDepSet) {
         TaintDepGraphNode *vNode = valToNodeMap[v];
         // Check the parent to which this node is already connected.
-        unordered_set<TaintDepGraphNode*> parentConnected;
+        unordered_set<TaintDepGraphNode *> parentConnected;
 
         // If it is a top-level node.
         if (vNode->type == TaintDepGraphNode::NodeType::POS_TAINT_SOURCE ||
@@ -304,8 +294,7 @@ struct TaintDepGraph {
             node->addChildOrParent(vNode);
             parentConnected.insert(vNode);
           }
-        }
-        else {
+        } else {
           // If it is a bottom-level node.
           for (TaintDepGraphNode *parent : vNode->children) {
 
@@ -322,7 +311,7 @@ struct TaintDepGraph {
   }
 
   // remove v from the graph.
-  void removeTaint(Value* v) {
+  void removeTaint(Value *v) {
 
     if (valToNodeMap.find(v) != valToNodeMap.end()) {
       TaintDepGraphNode *node = valToNodeMap[v];
@@ -370,11 +359,11 @@ struct TaintDepGraph {
     }
   }
 
-  void addCallSiteReturnTaint(Value* retVal, Function* callee,
-                              vector<Value*> taintedArgs) {
+  void addCallSiteReturnTaint(Value *retVal, Function *callee,
+                              vector<Value *> taintedArgs) {
 
     // If the return value is tainted.
-    TaintDepGraphNode* node = new TaintDepGraphNode(retVal);
+    TaintDepGraphNode *node = new TaintDepGraphNode(retVal);
     node->type = TaintDepGraphNode::NodeType::POS_TAINT_SOURCE;
     node->attr.isReturnCallNode = true;
     node->attr.callNodeArgs = taintedArgs;
@@ -384,7 +373,7 @@ struct TaintDepGraph {
     callSiteReturnNode.push_back(node);
   }
 
-  void addTaintSource(Value* v) {
+  void addTaintSource(Value *v) {
     TaintDepGraphNode *node = new TaintDepGraphNode(v);
     node->type = TaintDepGraphNode::NodeType::DEF_TAINT_SOURCE;
     valToNodeMap.insert({v, node});
@@ -392,7 +381,7 @@ struct TaintDepGraph {
     addTopLevelNode(node);
   }
 
-  void markReturnValue(Value* v) {
+  void markReturnValue(Value *v) {
     if (valToNodeMap.find(v) != valToNodeMap.end()) {
       TaintDepGraphNode *node = valToNodeMap[v];
       node->attr.isReturnValue = true;
@@ -409,20 +398,17 @@ struct TaintDepGraph {
 
       if (node->attr.isArgumentNode) {
         dprintf(logLevel, " \033[0;31m (Argument node) Argument Index=",
-                to_string(node->attr.argumentNumber).c_str()," \033[0m");
-      }
-      else if (node->attr.isReturnCallNode) {
+                to_string(node->attr.argumentNumber).c_str(), " \033[0m");
+      } else if (node->attr.isReturnCallNode) {
         dprintf(logLevel, " \033[0;31m (Call Site node) \033[0m");
-      }
-      else if (node->attr.isReturnValue) {
+      } else if (node->attr.isReturnValue) {
         dprintf(logLevel, " \033[0;31m (Return value) \033[0m");
-      }
-      else if (node->nanStatus == TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE) {
+      } else if (node->nanStatus ==
+                 TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE) {
         dprintf(logLevel, " \033[0;31m (NaN source) Id=",
-                  to_string(node->attr.nanSourceNumber).c_str(), " \033[0m");
-      }
-      else if (node->nanStatus ==
-               TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
+                to_string(node->attr.nanSourceNumber).c_str(), " \033[0m");
+      } else if (node->nanStatus ==
+                 TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
         dprintf(logLevel, " \033[0;31m (Tainted NaN) \033[0m");
       }
 
@@ -435,14 +421,12 @@ struct TaintDepGraph {
 
         if (child->attr.isReturnValue) {
           dprintf(logLevel, " \033[0;31m (Return value) \033[0m");
-        }
-        else if (child->nanStatus ==
-                TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE) {
+        } else if (child->nanStatus ==
+                   TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE) {
           dprintf(logLevel, " \033[0;31m (NaN source) Id=",
                   to_string(child->attr.nanSourceNumber).c_str(), " \033[0m");
-        }
-        else if (child->nanStatus ==
-                TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
+        } else if (child->nanStatus ==
+                   TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
           dprintf(logLevel, " \033[0;31m (Tainted NaN) \033[0m");
         }
 
@@ -456,15 +440,13 @@ struct TaintDepGraph {
 
 // DS to implement a function call stack for collapsing the constraints.
 struct FunctionCallStack {
-  stack<Function*> callStack;
+  stack<Function *> callStack;
   int length;
-  unordered_set<Function*> functionsInCallStack;
+  unordered_set<Function *> functionsInCallStack;
 
-  FunctionCallStack() {
-    length = 0;
-  }
+  FunctionCallStack() { length = 0; }
 
-  void push(Function* F) {
+  void push(Function *F) {
     callStack.push(F);
     length++;
     functionsInCallStack.insert(F);
@@ -489,14 +471,15 @@ struct FunctionCallStack {
 // For the main() function, all parameters are considered tainted.
 struct FunctionContext {
 
-  // For main() function callInst and caller will be NULL; Please check for that.
+  // For main() function callInst and caller will be NULL; Please check for
+  // that.
   Instruction *callInst;
   Function *caller;
 
   // Which arguments of this funtion are tainted?
   vector<int> numArgTainted;
 
-  FunctionContext (Instruction* ii, Function *c, vector<int> numArg) {
+  FunctionContext(Instruction *ii, Function *c, vector<int> numArg) {
     callInst = ii;
     caller = c;
     numArgTainted.insert(numArgTainted.begin(), numArg.begin(), numArg.end());
@@ -510,11 +493,11 @@ struct FunctionContext {
 
 // DS to hold attacker controlled NAN sources
 struct AttackerControlledNAN {
-  unordered_map<TaintDepGraphNode*, Function*> nodeToFunctionMap;
+  unordered_map<TaintDepGraphNode *, Function *> nodeToFunctionMap;
 
   AttackerControlledNAN() {}
 
-  void addNode(TaintDepGraphNode* node, Function* F) {
+  void addNode(TaintDepGraphNode *node, Function *F) {
     nodeToFunctionMap.insert({node, F});
   }
 };
@@ -526,39 +509,39 @@ struct FunctionTaintSet {
   // Variabes can have 4 states {UNKNOWN, TAINTED, UNTAINTED, DEPENDS}
   // The DEPENDS state means that the taintedness of this variables depends
   // on the return value of a call instruction.
-  unordered_map<Value*, vector<Value*>> taintSet;
+  unordered_map<Value *, vector<Value *>> taintSet;
 
   // Where in this function can NaN be generated?
   // Tracks the first instruction that can generate a NaN.
-  set<Value*> nanSources;
+  set<Value *> nanSources;
 
   // Values that are both tainted and NaNs.
-  set<Value*> taintedNans;
+  set<Value *> taintedNans;
 
-  pair<bool, vector<Value*>> isReturnValueTainted;
+  pair<bool, vector<Value *>> isReturnValueTainted;
 
   // Has the FunctionTaintSet changed!
   bool hasChanged;
-  stack<bool> loopTaintsChanged; // For loop at each depth, track if the taints changed. First pushed is root loop.
+  stack<bool> loopTaintsChanged; // For loop at each depth, track if the taints
+                                 // changed. First pushed is root loop.
 
   // Mark the 'val' as return value of this function.
-  void markThisValueAsReturnValue(Value* val) {
+  void markThisValueAsReturnValue(Value *val) {
 
     if (taintSet.find(val) != taintSet.end()) {
       isReturnValueTainted.first = true;
       isReturnValueTainted.second = taintSet[val];
-    }
-    else {
+    } else {
       isReturnValueTainted.first = false;
     }
   }
 
   // Check is any value from dependVals is tainted, if so, add valueToBeTainted
   // to the taint set.
-  void checkAndPropagateTaint(Value* valueToBeTainted,
-                              vector<Value*> dependVals = {}) {
+  void checkAndPropagateTaint(Value *valueToBeTainted,
+                              vector<Value *> dependVals = {}) {
 
-    vector<Value*> depends;
+    vector<Value *> depends;
     bool isUnConditionalTaint = false;
     bool isNaN = false;
 
@@ -566,14 +549,15 @@ struct FunctionTaintSet {
     // It's usefull for user inputs or taint sources.
     bool isTaint = (dependVals.size() == 0) ? true : false;
 
-    for (Value* val : dependVals) {
+    for (Value *val : dependVals) {
 
       if (taintSet.find(val) != taintSet.end()) {
         depends.insert(depends.begin(), taintSet[val].begin(),
-                      taintSet[val].end());
+                       taintSet[val].end());
         isTaint = true;
 
-        if (taintSet[val].size() == 0) isUnConditionalTaint = true;
+        if (taintSet[val].size() == 0)
+          isUnConditionalTaint = true;
 
         if (taintedNans.find(val) != taintedNans.end()) {
           isNaN = true;
@@ -585,13 +569,14 @@ struct FunctionTaintSet {
       taintedNans.insert(valueToBeTainted);
     }
 
-    if (isUnConditionalTaint) depends = {};
+    if (isUnConditionalTaint)
+      depends = {};
 
     if (isTaint) {
-      vector<Value*> oldDepends;
+      vector<Value *> oldDepends;
       bool taintChanged = false;
 
-      if(taintSet.count(valueToBeTainted) == 0)
+      if (taintSet.count(valueToBeTainted) == 0)
         taintChanged = true;
       else
         oldDepends = taintSet[valueToBeTainted];
@@ -602,7 +587,7 @@ struct FunctionTaintSet {
       if (oldDepends != depends)
         taintChanged = true;
 
-      if(taintChanged && loopTaintsChanged.size() > 0){
+      if (taintChanged && loopTaintsChanged.size() > 0) {
         loopTaintsChanged.pop();
 
         if (loopTaintsChanged.size() > 0)
@@ -613,31 +598,28 @@ struct FunctionTaintSet {
     }
   }
 
-  void taintFunctionReturnValue(Value* valToTaint, Value* callInst) {
+  void taintFunctionReturnValue(Value *valToTaint, Value *callInst) {
 
     taintSet.insert({valToTaint, {callInst}});
   }
 
-  void addNaNSource(Value* val) {
+  void addNaNSource(Value *val) {
     nanSources.insert(val);
     taintedNans.insert(val);
   }
 
-  bool isTainted(Value* val) {
-    return taintSet.find(val) != taintSet.end();
+  bool isTainted(Value *val) { return taintSet.find(val) != taintSet.end(); }
+
+  bool isUnconditionalTainted(Value *val) {
+
+    return (taintSet.find(val) != taintSet.end() && taintSet[val].size() == 0);
   }
 
-  bool isUnconditionalTainted(Value * val) {
-
-    return (taintSet.find(val) != taintSet.end() &&
-            taintSet[val].size() == 0);
-  }
-
-  bool isNanValue(Value* val) {
+  bool isNanValue(Value *val) {
     return taintedNans.find(val) != taintedNans.end();
   }
 
-  void removeTaint(Value* val) {
+  void removeTaint(Value *val) {
     taintSet.erase(val);
 
     if (nanSources.find(val) != nanSources.end())
@@ -647,66 +629,57 @@ struct FunctionTaintSet {
       taintedNans.erase(val);
   }
 
-  void snapshot() {
-    hasChanged = false;
-  }
+  void snapshot() { hasChanged = false; }
 
-  bool getCurrentLoopTaintsChanged() {
-    return loopTaintsChanged.top();
-  }
+  bool getCurrentLoopTaintsChanged() { return loopTaintsChanged.top(); }
 
-  void resetCurrentLoopTaintsChanged() {
-    loopTaintsChanged.top() = false;
-  }
+  void resetCurrentLoopTaintsChanged() { loopTaintsChanged.top() = false; }
 
-  void trackNewLoop() {
-    loopTaintsChanged.push(true);
-  }
+  void trackNewLoop() { loopTaintsChanged.push(true); }
 
-  void finishTrackingLoop() {
-    loopTaintsChanged.pop();
-  }
+  void finishTrackingLoop() { loopTaintsChanged.pop(); }
 
   void summarize(int logLevel) {
     dprintf(logLevel,
-              "\033[0;32m----------Summarizing Taint Set------------------\n");
+            "\033[0;32m----------Summarizing Taint Set------------------\n");
 
     for (auto pp : taintSet) {
       dprintf(logLevel, llvmToString(pp.first).c_str(), " : depends on = {");
-      for(auto di : pp.second)
+      for (auto di : pp.second)
         if (di)
-          dprintf(logLevel, llvmToString(di).c_str(),", ");
+          dprintf(logLevel, llvmToString(di).c_str(), ", ");
       dprintf(logLevel, "}\n");
     }
 
-    dprintf(logLevel, "----------End Summarizing Taint Set--------------\033[0m\n");
+    dprintf(logLevel,
+            "----------End Summarizing Taint Set--------------\033[0m\n");
 
-    dprintf(logLevel, "\033[0;32m----------Summarizing NaN Set------------------\n");
+    dprintf(logLevel,
+            "\033[0;32m----------Summarizing NaN Set------------------\n");
 
     for (auto pp : taintedNans) {
       if (pp)
         dprintf(logLevel, llvmToString(pp).c_str(), "\n");
     }
 
-    dprintf(logLevel, "----------End Summarizing NaN Set--------------\033[0m\n");
+    dprintf(logLevel,
+            "----------End Summarizing NaN Set--------------\033[0m\n");
   }
 
-  FunctionTaintSet() {
-    hasChanged = false;
-  }
+  FunctionTaintSet() { hasChanged = false; }
 };
 
 // LLVM pass declaration for taint analysis.
 struct AchlysTaintChecker : public ModulePass {
 
   // Worklist for functions.
-  queue<pair<Function*, FunctionContext>> funcWorklist;
+  queue<pair<Function *, FunctionContext>> funcWorklist;
 
   // Mapping between a function and its FunctionTaintSet.
-  unordered_map<Function*, FunctionTaintSet> funcTaintSet;
+  unordered_map<Function *, FunctionTaintSet> funcTaintSet;
 
   // Mapping between a function and its Taint Summary Graph.
-  unordered_map<Function*, TaintDepGraph*> funcTaintSummaryGraph;
+  unordered_map<Function *, TaintDepGraph *> funcTaintSummaryGraph;
 
   // Cache results for inter-procedural alias analysis.
   AAResults *aliasAnalysisResult;
@@ -724,26 +697,27 @@ struct AchlysTaintChecker : public ModulePass {
   // Check if a binary instruction is constant or not.
   // a - a, a xor a, a X 0, a / a are all constant instructions.
   // We don't propogate taint info. upon finding a constant instruction.
-  bool isConstantInstruction(int opcode, Value* operand1, Value* operand2) {
+  bool isConstantInstruction(int opcode, Value *operand1, Value *operand2) {
 
     if (opcode == Instruction::Sub || opcode == Instruction::FSub ||
         opcode == Instruction::Xor || opcode == Instruction::FDiv ||
         opcode == Instruction::SDiv) {
 
-          // If the operands are equal or aliases.
-          if (operand1 == operand2 || aliasAnalysisResult->isMustAlias(operand1,
-              operand2)) {
-            return true;
-          }
+      // If the operands are equal or aliases.
+      if (operand1 == operand2 ||
+          aliasAnalysisResult->isMustAlias(operand1, operand2)) {
+        return true;
+      }
     }
 
     // Check for multiply by zero.
     if (opcode == Instruction::FMul || opcode == Instruction::Mul) {
       if (auto ii = dyn_cast<Constant>(operand1)) {
-        if (ii->isZeroValue()) return true;
-      }
-      else if (auto i = dyn_cast<Constant>(operand2)) {
-        if (i->isZeroValue()) return true;
+        if (ii->isZeroValue())
+          return true;
+      } else if (auto i = dyn_cast<Constant>(operand2)) {
+        if (i->isZeroValue())
+          return true;
       }
     }
 
@@ -751,7 +725,7 @@ struct AchlysTaintChecker : public ModulePass {
   }
 
   // Check if this function is user-defined or system-defined.
-  bool isUserDefinedFunction(Function& F) {
+  bool isUserDefinedFunction(Function &F) {
     // If this   is not a user-defined function.
     if (F.isDeclaration() || F.getName().str().find("std") != string::npos)
       return false;
@@ -767,7 +741,7 @@ struct AchlysTaintChecker : public ModulePass {
 
     if (funcName == "fread" || funcName.find("istream") != string::npos ||
         funcName == "read" || funcName == "aio_read")
-        return true;
+      return true;
 
     return false;
   }
@@ -788,11 +762,11 @@ struct AchlysTaintChecker : public ModulePass {
   // Single exit point for our analysis pass.
   // Before exiting, print debug and output info on console.
   void gracefulExit() {
-    #ifdef __DEBUG__
-      dprintf(1,
-              "---------------Ending taint analysis pass-------------------\n");
-      errs() << debug.str();
-    #endif
+#ifdef __DEBUG__
+    dprintf(1,
+            "---------------Ending taint analysis pass-------------------\n");
+    errs() << debug.str();
+#endif
     debug.flush();
 
     errs() << output.str();
@@ -800,20 +774,20 @@ struct AchlysTaintChecker : public ModulePass {
   }
 
   // Function to interprocedurally collapse constraints.
-  bool collapseConstraints(Function*, FunctionCallStack*, vector<int>,
-                          AttackerControlledNAN*);
+  bool collapseConstraints(Function *, FunctionCallStack *, vector<int>,
+                           AttackerControlledNAN *);
 
   // Analyze each instruction one by one. Essentially, this function will apply
   // taint propogation and eviction policies on each instruction.
-  void analyzeInstruction(Instruction*, FunctionTaintSet*,
-                          FunctionContext, TaintDepGraph*);
+  void analyzeInstruction(Instruction *, FunctionTaintSet *, FunctionContext,
+                          TaintDepGraph *);
 
   // Analyze each instruction one by one. Essentially, this function will apply
   // taint propogation and eviction policies on each instruction.
-  void analyzeBasicBlock(BasicBlock*, FunctionTaintSet*,
-                          FunctionContext, TaintDepGraph*);
-  void analyzeLoop(BasicBlock*, FunctionTaintSet*, FunctionContext,
-                    LoopInfo &loopInfo, TaintDepGraph*);
+  void analyzeBasicBlock(BasicBlock *, FunctionTaintSet *, FunctionContext,
+                         TaintDepGraph *);
+  void analyzeLoop(BasicBlock *, FunctionTaintSet *, FunctionContext,
+                   LoopInfo &loopInfo, TaintDepGraph *);
   // Analyze each function one by one. We will use a lattice-based fixpoint
   // iterative, inter-procedural data flow analysis.
   // TODO:
@@ -823,20 +797,18 @@ struct AchlysTaintChecker : public ModulePass {
 
   // Filter attacker controlled NaN nodes to keep only those that affects the
   // control-flow of the program.
-  void filterAttackerControlledNANSources(
-                              AttackerControlledNAN*);
-
+  void filterAttackerControlledNANSources(AttackerControlledNAN *);
 
   // Function to edit LLVM IR and add injectFault() calls.
-  void insertFICall(Instruction*, Function*, int);
+  void insertFICall(Instruction *, Function *, int);
 
   // Add instrumentations for fault injection.
-  void doFaultInjectionInstrumentation(AttackerControlledNAN*);
+  void doFaultInjectionInstrumentation(AttackerControlledNAN *);
 
   // Entry point of this pass.
-  bool runOnModule(Module& M) override;
+  bool runOnModule(Module &M) override;
 
   // Our taint analysis pass depends on these LLVM passes.
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
-} // End of namespace.
+} // namespace achlys

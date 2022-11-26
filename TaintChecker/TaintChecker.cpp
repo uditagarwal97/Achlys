@@ -140,7 +140,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     dprintf(1, "^^^^^ I am in GetElementPtrInst\n");
     dprintf(1, "Current inst is : ", llvmToString(gep).c_str(), "\n");
     dprintf(1, "The base pointer is : ", llvmToString(val).c_str(), "\n");
-    pointerSet.insert({gep, val});
+    pointerMap->insert(gep, val);
   }
 
   // Handle Binary operator like add, sub, mul, div, fdiv, etc.
@@ -304,7 +304,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     // FIXME: for debugging only, remove later
     base_node->printPtrNode();
     ptrTree->addToTop(base_node);
-    pointerSet.insert({alloc_inst, NULL});
+    pointerMap->insert(alloc_inst, NULL);
   } else {
     dprintf(3, "\033[0;31m [WARNING] Unhandled Instruction: ",
             llvmToString(i).c_str(), " \033[0m\n");
@@ -846,23 +846,10 @@ bool AchlysTaintChecker::runOnModule(Module &M) {
   dprintf(1, "-----------Finished Calculating Function Summaries: time = ",
           to_string(timeTook).c_str(), " Seconds \n");
 
-  // FIXME: for debugging only, remove later
-  dprintf(1, "^^^^^ I am printing out the pointer map\n");
-  for (std::pair<Value *, Value *> element : pointerSet) {
-    if (element.first != NULL) {
-      dprintf(1, "--> key: ", llvmToString(element.first).c_str(), "\n");
-    } else {
-      dprintf(1, "--> key is NULL\n");
-    }
-    if (element.second != NULL) {
-      dprintf(1, "--> value: ", llvmToString(element.second).c_str(), "\n");
-    } else {
-      dprintf(1, "--> value is NULL\n");
-    }
-  }
-  dprintf(1, "^^^^^ map size: ", to_string(pointerSet.size()).c_str(), "\n");
-  dprintf(1, "^^^^^ I am printing out the pointer tree\n");
+  // FIXME_START: for debugging only, remove later
+  pointerMap->printMap();
   ptrTree->printTopBasePtrList();
+  // FIXME_END
 
   dprintf(
       1,

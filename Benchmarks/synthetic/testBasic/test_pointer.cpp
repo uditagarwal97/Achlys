@@ -9,18 +9,24 @@
 using namespace std;
 
 int main(int argc, char **argv) {
+  int dir = 0;
   int static_arr[5] = {1, 2, 3, 4, 5};
-  int *third_pointer = (int *)(static_arr + 2);
-  *(third_pointer) = 10;
-
-  int *dyn_arr = (int *)malloc(10 * sizeof(int));
-  dyn_arr[0] = static_arr[4];
-  int *last_ele = &dyn_arr[9];
-  if (argc != 2) {
-    cout << "Pass an int\n. Aborting.\n";
-    exit(1);
+  int *derived_pointer;
+  if (dir == 0) {
+    derived_pointer = (int *)(static_arr + 0);
+  } else {
+    derived_pointer = (int *)(static_arr + 4);
   }
-  *(last_ele) = stoi(argv[1]);
+  *(derived_pointer) = 10;
+
+  // int *dyn_arr = (int *)malloc(10 * sizeof(int));
+  // dyn_arr[0] = static_arr[4];
+  // int *last_ele = &dyn_arr[9];
+  // if (argc != 2) {
+  //   cout << "Pass an int\n. Aborting.\n";
+  //   exit(1);
+  // }
+  // *(last_ele) = stoi(argv[1]);
 
   return 0;
 }

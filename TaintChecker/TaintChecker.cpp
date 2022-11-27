@@ -136,10 +136,11 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     // resulting pointer as tainted as well.
     fc->checkAndPropagateTaint(gep, {val});
     depGraph->checkAndPropogateTaint(gep, {val});
-
+    // FIXME_START: dor debugging only, remove later
     dprintf(1, "^^^^^ I am in GetElementPtrInst\n");
     dprintf(1, "Current inst is : ", llvmToString(gep).c_str(), "\n");
     dprintf(1, "The base pointer is : ", llvmToString(val).c_str(), "\n");
+    // FIXME_END
     pointerMap->insert(gep, val);
   }
 
@@ -301,8 +302,9 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
   else if (auto alloc_inst = dyn_cast<AllocaInst>(i)) {
     dprintf(1, "***** I am a alloc inst\n");
     PtrDepTreeNode *base_node = new PtrDepTreeNode(alloc_inst);
-    // FIXME: for debugging only, remove later
+    // FIXME_START: for debugging only, remove later
     base_node->printPtrNode();
+    // FIXME_END
     ptrTree->addToTop(base_node);
     pointerMap->insert(alloc_inst, NULL);
   } else {

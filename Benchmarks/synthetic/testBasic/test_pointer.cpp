@@ -9,7 +9,7 @@
 using namespace std;
 
 int main(int argc, char **argv) {
-  int dir = 0;
+  int dir = 0; // This is also an alloc inst
   int static_arr[5] = {1, 2, 3, 4, 5};
   int *derived_pointer;
   if (dir == 0) {

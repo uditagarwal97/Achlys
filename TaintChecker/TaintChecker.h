@@ -598,9 +598,6 @@ struct AchlysTaintChecker : public ModulePass {
   // Pointer Map used to store base/derived pairs along the static analysis
   PtrMap *pointerMap = new PtrMap();
 
-  // The tree to store all derived pointers to its base pointers
-  PtrDepTree *ptrTree = new PtrDepTree();
-
   // Cache results for inter-procedural alias analysis.
   AAResults *aliasAnalysisResult;
 

@@ -305,7 +305,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     // FIXME_START: for debugging only, remove later
     base_node->printPtrNode();
     // FIXME_END
-    ptrTree->addToTop(base_node);
+    pointerMap->ptrTree->addToTop(base_node);
     pointerMap->insert(alloc_inst, NULL);
   } else {
     dprintf(3, "\033[0;31m [WARNING] Unhandled Instruction: ",
@@ -850,7 +850,8 @@ bool AchlysTaintChecker::runOnModule(Module &M) {
 
   // FIXME_START: for debugging only, remove later
   pointerMap->printMap();
-  ptrTree->printTopBasePtrList();
+  pointerMap->constructTree();
+  pointerMap->ptrTree->printTopBasePtrList();
   // FIXME_END
 
   dprintf(

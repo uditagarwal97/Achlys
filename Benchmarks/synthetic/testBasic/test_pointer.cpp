@@ -10,14 +10,15 @@ using namespace std;
 
 int main(int argc, char **argv) {
   int dir = 0; // This is also an alloc inst
-  int static_arr[5] = {1, 2, 3, 4, 5};
+  int arr_one[5] = {1, 2, 3, 4, 5};
+  int arr_two[5] = {10, 20, 30, 40, 50};
   int *derived_pointer;
   if (dir == 0) {
-    derived_pointer = (int *)(static_arr + 0);
+    derived_pointer = (int *)(arr_one + 0);
   } else {
-    derived_pointer = (int *)(static_arr + 4);
+    derived_pointer = (int *)(arr_two + 4);
   }
-  *(derived_pointer) = 10;
+  *(derived_pointer) = 100;
 
   // int *dyn_arr = (int *)malloc(10 * sizeof(int));
   // dyn_arr[0] = static_arr[4];

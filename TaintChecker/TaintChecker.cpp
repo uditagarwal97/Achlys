@@ -96,7 +96,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
   // Handle Load Instruction.
   else if (auto li = dyn_cast<LoadInst>(i)) {
-
+    dprintf(1, "##### IN load inst\n");
     // Where are you loading from?
     auto loadLocation = li->getOperand(0);
 
@@ -107,15 +107,20 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
     for (auto res : NLDep) {
       if (res.getResult().isClobber() || res.getResult().isDef()) {
-
         Instruction *ins = res.getResult().getInst();
         if (auto ssi = dyn_cast<StoreInst>(ins)) {
-          dprintf(3, "[MEM_DEP] Found at inst: ", llvmToString(ins).c_str(),
+          // FIXME_START: for debugging only, remove later
+          dprintf(1, "[MEM_DEP] Found at inst: ", llvmToString(ssi).c_str(),
                   "\n");
+          // FIXME_END
           // What are you storing?
-          auto valToStore = ssi->getOperand(0);
-          fc->checkAndPropagateTaint(li, {valToStore});
-          depGraph->checkAndPropogateTaint(li, {valToStore});
+          auto src_val = ssi->getOperand(0);
+          auto des_val = ssi->getOperand(1);
+
+          pointerMap->insert(des_val, src_val);
+
+          fc->checkAndPropagateTaint(li, {src_val});
+          depGraph->checkAndPropogateTaint(li, {src_val});
         }
       }
     }
@@ -852,6 +857,7 @@ bool AchlysTaintChecker::runOnModule(Module &M) {
   pointerMap->printMap();
   pointerMap->constructTree();
   pointerMap->ptrTree->printTopBasePtrList();
+  pointerMap->ptrTree->printSecondLevelPtrList();
   // FIXME_END
 
   dprintf(

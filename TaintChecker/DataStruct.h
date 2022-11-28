@@ -28,16 +28,15 @@
 struct PtrDepTreeNode {
   Value *val;
 
-  PtrDepTreeNode *parent;
+  std::vector<PtrDepTreeNode *> parent;
   std::vector<PtrDepTreeNode *> children;
 
   bool isTaintedInCurrentStack;
 
   // Constructor
-  PtrDepTreeNode(Value *v)
-      : val(v), isTaintedInCurrentStack(false), parent(NULL) {}
+  PtrDepTreeNode(Value *v) : val(v), isTaintedInCurrentStack(false) {}
 
-  void addParent(PtrDepTreeNode *node) { parent = node; }
+  void addParent(PtrDepTreeNode *node) { parent.push_back(node); }
 
   void addChild(PtrDepTreeNode *node) { children.push_back(node); }
 
@@ -54,6 +53,15 @@ struct PtrDepTree {
 
   // Constructor
   PtrDepTree() {}
+
+  bool isRoot(Value *val) {
+    for (int i = 0; i < top_base_pointers.size(); i++) {
+      if (top_base_pointers[i]->val == val) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   void addToTop(PtrDepTreeNode *node) { top_base_pointers.push_back(node); }
 
@@ -74,6 +82,27 @@ struct PtrDepTree {
     dprintf(1, "*********** end print current top level base pointers "
                "*************\n");
   }
+  void printSecondLevelPtrList() {
+    dprintf(1, "^^^^^ I am printing out the second level of the tree\n");
+    dprintf(1, "*********** start print the second level of the tree "
+               "*************\n");
+    int size = 0;
+    for (int i = 0; i < top_base_pointers.size(); i++) {
+      for (int j = 0; j < top_base_pointers[i]->children.size(); j++) {
+        dprintf(1, "--> child: ");
+        top_base_pointers[i]->children[j]->printPtrNode();
+        for (int k = 0; k < top_base_pointers[i]->children[j]->parent.size();
+             k++) {
+          dprintf(1, "--> parent: ");
+          top_base_pointers[i]->children[j]->parent[k]->printPtrNode();
+        }
+      }
+      size += top_base_pointers[i]->children.size();
+    }
+    dprintf(1, "^^^^^ second level node size: ", to_string(size).c_str(), "\n");
+    dprintf(1, "*********** end print the second level of the tree "
+               "*************\n");
+  }
 };
 
 // This is a map to store the derived pointers and base(intermiediate) pointers
@@ -81,6 +110,8 @@ struct PtrDepTree {
 // We will use it at the end of program to construct the pointer tree
 struct PtrMap {
   // Mapping between a derived pointer and its base pointer.
+  // the second vector only store the real base pointers no intermediate
+  // pointers stored, so it is easier to construct the tree
   unordered_map<Value *, vector<Value *>> pointerSet;
   // The tree to store all derived pointers to its base pointers
   PtrDepTree *ptrTree = new PtrDepTree();
@@ -93,30 +124,55 @@ struct PtrMap {
     if (key == NULL) {
       return;
     }
-    if (pointerSet.find(key) != pointerSet.end()) {
-      // this key has already in the map
-      pointerSet.find(key)->second.push_back(val);
-    } else {
+    if (val == NULL) {
+      // directly add into map since it is from an alloca inst
       vector<Value *> val_list;
-      if (val != NULL) {
-        val_list.push_back(val);
-      }
       pointerSet.insert({key, val_list});
+    } else {
+      // check if the val is a base pointer in root or not
+      if (ptrTree->isRoot(val)) {
+        // push directly into vector
+        if (pointerSet.find(key) != pointerSet.end()) {
+          // this key has already in the map
+          pointerSet.find(key)->second.push_back(val);
+        } else {
+          vector<Value *> val_list;
+          val_list.push_back(val);
+          pointerSet.insert({key, val_list});
+        }
+      } else {
+        // not a root, find the base of val and copy the base as the base of key
+        if (pointerSet.find(key) != pointerSet.end()) {
+          vector<Value *> baseOfVal = pointerSet.find(val)->second;
+          vector<Value *> baseOfKey = pointerSet.find(key)->second;
+          for (int i = 0; i < baseOfVal.size(); i++) {
+            if (!containVal(baseOfKey, baseOfVal[i])) {
+              pointerSet.find(key)->second.push_back(baseOfVal[i]);
+            }
+          }
+        } else {
+          vector<Value *> baseOfVal = pointerSet.find(val)->second;
+          vector<Value *> baseOfKey;
+          for (int i = 0; i < baseOfVal.size(); i++) {
+            baseOfKey.push_back(baseOfVal[i]);
+          }
+          pointerSet.insert({key, baseOfKey});
+        }
+      }
     }
   }
 
-  // tranverse the map to construct the tree
-  // FIXME: use the first val in vector as the target val for now
-  Value *findBase(Value *derived_key) {
-    Value *current_key = derived_key;
-    while (!isBasePointer(current_key)) {
-      current_key = pointerSet.find(current_key)->second[0];
+  bool containVal(vector<Value *> list, Value *val) {
+    for (int i = 0; i < list.size(); i++) {
+      if (list[i] == val) {
+        return true;
+      }
     }
-    return current_key;
+    return false;
   }
 
   // get the top base node by val
-  struct PtrDepTreeNode *getNodeByValue(Value *root_val) {
+  PtrDepTreeNode *getNodeByValue(Value *root_val) {
     for (int i = 0; i < ptrTree->top_base_pointers.size(); i++) {
       if (ptrTree->top_base_pointers[i]->val == root_val) {
         return ptrTree->top_base_pointers[i];
@@ -124,33 +180,22 @@ struct PtrMap {
     }
   }
 
-  // insert the second level node in the tree
-  void insertSecondLevel(Value *root_val, Value *child_val) {
-    struct PtrDepTreeNode *parent_node = getNodeByValue(root_val);
-    struct PtrDepTreeNode *child_node = new struct PtrDepTreeNode(child_val);
-    child_node->addParent(parent_node);
-    parent_node->addChild(child_node);
-  }
-
   void constructTree() {
     for (std::pair<Value *, vector<Value *>> element : pointerSet) {
       Value *key = element.first;
       vector<Value *> val_list = element.second;
       if (key != NULL) {
-        dprintf(1, "--> key: ", llvmToString(element.first).c_str(), "\n");
         if (!val_list.empty()) {
-          dprintf(1, "--> value:");
-          printValVector(element.second);
-          // if not base, need to find base recursively
-          Value *base = findBase(key);
-          // after find base, insert in the tree
-          insertSecondLevel(base, key);
+          PtrDepTreeNode *new_second_level_node = new PtrDepTreeNode(key);
+          for (int i = 0; i < val_list.size(); i++) {
+            PtrDepTreeNode *root_node = getNodeByValue(val_list[i]);
+            root_node->addChild(new_second_level_node);
+            new_second_level_node->addParent(root_node);
+          }
         } else {
-          dprintf(1, "--> value is NULL, this is a base: SKIP\n");
           continue;
         }
       } else {
-        dprintf(1, "--> key is NULL, SHOULD NOT BE HERE\n");
         return;
       }
     }

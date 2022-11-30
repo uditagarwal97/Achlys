@@ -65,6 +65,19 @@ struct PtrDepTree {
 
   void addToTop(PtrDepTreeNode *node) { top_base_pointers.push_back(node); }
 
+  void removeElementFromRoot(Value *key) {
+    vector<PtrDepTreeNode *> temp_vector;
+    for (int i = 0; i < top_base_pointers.size(); i++) {
+      temp_vector.push_back(top_base_pointers[i]);
+    }
+    top_base_pointers.clear();
+    for (int j = 0; j < temp_vector.size(); j++) {
+      if (temp_vector[j]->val != key) {
+        top_base_pointers.push_back(temp_vector[j]);
+      }
+    }
+  }
+
   void printTopBasePtrList() {
     dprintf(1, "^^^^^ I am printing out the pointer tree\n");
     dprintf(1, "*********** start print current top level base pointers "
@@ -159,9 +172,15 @@ struct PtrMap {
           pointerSet.insert({key, baseOfKey});
         }
       }
+      if (ptrTree->isRoot(key)) {
+        // need to remove the entry for key that was a root before
+        // since val is not NULL, the allocated key is not a root anymore
+        ptrTree->removeElementFromRoot(key);
+      }
     }
   }
 
+  // check if a vector contains a val or not
   bool containVal(vector<Value *> list, Value *val) {
     for (int i = 0; i < list.size(); i++) {
       if (list[i] == val) {
@@ -180,6 +199,7 @@ struct PtrMap {
     }
   }
 
+  // construct a pointer tree at the end of each function using pointerSet map
   void constructTree() {
     for (std::pair<Value *, vector<Value *>> element : pointerSet) {
       Value *key = element.first;

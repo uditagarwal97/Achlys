@@ -306,12 +306,19 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
   // Hanlde pointer allocation
   else if (auto alloc_inst = dyn_cast<AllocaInst>(i)) {
     dprintf(1, "***** I am a alloc inst\n");
-    PtrDepTreeNode *base_node = new PtrDepTreeNode(alloc_inst);
-    // FIXME_START: for debugging only, remove later
-    base_node->printPtrNode();
-    // FIXME_END
-    pointerMap->ptrTree->addToTop(base_node);
-    pointerMap->insert(alloc_inst, NULL);
+    errs() << *(alloc_inst->getAllocatedType()) << "\n";
+    dprintf(1, "current inst: ", llvmToString(i).c_str(), " \n");
+
+    if (alloc_inst->getAllocatedType()->isPointerTy() ||
+        alloc_inst->getAllocatedType()->isArrayTy()) {
+      PtrDepTreeNode *base_node = new PtrDepTreeNode(alloc_inst);
+      // FIXME_START: for debugging only, remove later
+      base_node->printPtrNode();
+      // FIXME_END
+      pointerMap->ptrTree->addToTop(base_node);
+      pointerMap->insert(alloc_inst, NULL);
+    }
+
   } else {
     dprintf(3, "\033[0;31m [WARNING] Unhandled Instruction: ",
             llvmToString(i).c_str(), " \033[0m\n");

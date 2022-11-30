@@ -65,7 +65,8 @@ namespace achlys {
 void AchlysTaintChecker::analyzeInstruction(Instruction *i,
                                             FunctionTaintSet *fc,
                                             FunctionContext fcxt,
-                                            TaintDepGraph *depGraph) {
+                                            TaintDepGraph *depGraph,
+                                            PtrMap *pointerMap) {
 
   dprintf(3, "[STEP] Analyzing instruction: ", llvmToString(i).c_str(), "\n");
 
@@ -311,11 +312,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
     if (alloc_inst->getAllocatedType()->isPointerTy() ||
         alloc_inst->getAllocatedType()->isArrayTy()) {
-      PtrDepTreeNode *base_node = new PtrDepTreeNode(alloc_inst);
-      // FIXME_START: for debugging only, remove later
-      base_node->printPtrNode();
-      // FIXME_END
-      pointerMap->ptrTree->addToTop(base_node);
+      pointerMap->ptrTree->addToTop(alloc_inst);
       pointerMap->insert(alloc_inst, NULL);
     }
 
@@ -332,18 +329,20 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 void AchlysTaintChecker::analyzeBasicBlock(BasicBlock *bb,
                                            FunctionTaintSet *taintSet,
                                            FunctionContext fc,
-                                           TaintDepGraph *depGraph) {
+                                           TaintDepGraph *depGraph,
+                                           PtrMap *pointerMap) {
   dprintf(2, "[BasicBlock] Analyzing Basic Block ", bb->getName().data(), "\n");
   for (auto ii = bb->begin(); ii != bb->end(); ii++) {
     Instruction *ins = &(*ii);
-    analyzeInstruction(ins, taintSet, fc, depGraph);
+    analyzeInstruction(ins, taintSet, fc, depGraph, pointerMap);
   }
 }
 
 // Recursively analyzes basic block till taintSet does not change
 void AchlysTaintChecker::analyzeLoop(BasicBlock *bb, FunctionTaintSet *taintSet,
                                      FunctionContext fc, LoopInfo &loopInfo,
-                                     TaintDepGraph *depGraph) {
+                                     TaintDepGraph *depGraph,
+                                     PtrMap *pointerMap) {
   unsigned int depth = loopInfo.getLoopDepth(bb);
   taintSet->trackNewLoop();
   dprintf(2, "\033[0;33m[LOOP] Started analyzing Loop starting with \033[0m",
@@ -361,9 +360,9 @@ void AchlysTaintChecker::analyzeLoop(BasicBlock *bb, FunctionTaintSet *taintSet,
     unsigned int loopUnrolls = 0;
     while (currBlock != nullptr && loopInfo.getLoopDepth(currBlock) >= depth) {
       if (loopInfo.getLoopDepth(currBlock) == depth)
-        analyzeBasicBlock(currBlock, taintSet, fc, depGraph);
+        analyzeBasicBlock(currBlock, taintSet, fc, depGraph, pointerMap);
       else if (loopInfo.isLoopHeader(currBlock) == true)
-        analyzeLoop(currBlock, taintSet, fc, loopInfo, depGraph);
+        analyzeLoop(currBlock, taintSet, fc, loopInfo, depGraph, pointerMap);
       else
         dprintf(2, "[SKIP] Skipping Basic Block ", currBlock->getName().data(),
                 " with depth ",
@@ -390,6 +389,7 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc) {
 
   FunctionTaintSet taintSet;
   TaintDepGraph *depGraph;
+  PtrMap *pointerMap;
 
   // Init results from alias analysis pass for this function.
   getAnalysis<AAResultsWrapperPass>(*F).doInitialization(*(F->getParent()));
@@ -400,11 +400,16 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc) {
     dprintf(1, " for the first time\n");
     depGraph = new TaintDepGraph(F);
     funcTaintSummaryGraph.insert({F, depGraph});
+
+    pointerMap = new PtrMap(F);
+    funcPointerMap.insert({F, pointerMap});
   } else {
     dprintf(1, " again. Returning.\n");
     taintSet = funcTaintSet[F];
     taintSet.snapshot(); // Just to check if the taint set changes or not.
     depGraph = funcTaintSummaryGraph[F];
+
+    pointerMap = funcPointerMap[F];
     return; // Don't calculate the function summary again.
   }
 
@@ -433,6 +438,10 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc) {
       // Add all arguments to the dependency graph, irrespective of whether or
       // not they are tainted.
       depGraph->addFunctionArgument(arg, argCounter);
+      // TODO: if an arg is a pointer, add it as a base pointer in the PtrTree
+      // TODO: not sure if above^ should be added, need to have a benchmark that
+      // have multiple function call to see if args in each function would
+      // become an alloca inst in .ll file
     }
   }
 
@@ -446,12 +455,12 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc) {
     if (loopInfo.getLoopDepth(bb) == 0) {
       dprintf(2, "[NON_LOOP] Non-loop basic block ", bb->getName().data(),
               "\n");
-      analyzeBasicBlock(bb, &taintSet, fc, depGraph);
+      analyzeBasicBlock(bb, &taintSet, fc, depGraph, pointerMap);
     }
     // Should we check for loopHeader? loopInfo.isLoopHeader(bb)==true
     else if (loopInfo.isLoopHeader(bb) == true &&
              loopInfo.getLoopDepth(bb) == 1) {
-      analyzeLoop(bb, &taintSet, fc, loopInfo, depGraph);
+      analyzeLoop(bb, &taintSet, fc, loopInfo, depGraph, pointerMap);
     } else {
       dprintf(2, "[SKIP] Already Analyzed Basic Block ", bb->getName().data(),
               " with depth ", to_string(loopInfo.getLoopDepth(bb)).c_str(),
@@ -461,6 +470,12 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc) {
 
   taintSet.summarize(4);
   depGraph->printGraph(2);
+
+  // FIXME_START: for debugging only, remove later
+  pointerMap->printMap();
+  pointerMap->constructTree();
+  pointerMap->printTree();
+  // FIXME_END
 
   // Add the taint set of this function to the global map.
   if (funcTaintSet.find(F) == funcTaintSet.end()) {
@@ -859,13 +874,6 @@ bool AchlysTaintChecker::runOnModule(Module &M) {
   float timeTook = float(clock() - begin_time) / CLOCKS_PER_SEC;
   dprintf(1, "-----------Finished Calculating Function Summaries: time = ",
           to_string(timeTook).c_str(), " Seconds \n");
-
-  // FIXME_START: for debugging only, remove later
-  pointerMap->printMap();
-  pointerMap->constructTree();
-  pointerMap->ptrTree->printTopBasePtrList();
-  pointerMap->ptrTree->printSecondLevelPtrList();
-  // FIXME_END
 
   dprintf(
       1,

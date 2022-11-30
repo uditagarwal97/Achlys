@@ -595,8 +595,11 @@ struct AchlysTaintChecker : public ModulePass {
   // Mapping between a function and its Taint Summary Graph.
   unordered_map<Function *, TaintDepGraph *> funcTaintSummaryGraph;
 
+  // Mapping between a function and its pointer tree.
+  unordered_map<Function *, PtrMap *> funcPointerMap;
+
   // Pointer Map used to store base/derived pairs along the static analysis
-  PtrMap *pointerMap = new PtrMap();
+  // PtrMap *pointerMap = new PtrMap();
 
   // Cache results for inter-procedural alias analysis.
   AAResults *aliasAnalysisResult;
@@ -697,14 +700,14 @@ struct AchlysTaintChecker : public ModulePass {
   // Analyze each instruction one by one. Essentially, this function will apply
   // taint propogation and eviction policies on each instruction.
   void analyzeInstruction(Instruction *, FunctionTaintSet *, FunctionContext,
-                          TaintDepGraph *);
+                          TaintDepGraph *, PtrMap *);
 
   // Analyze each instruction one by one. Essentially, this function will apply
   // taint propogation and eviction policies on each instruction.
   void analyzeBasicBlock(BasicBlock *, FunctionTaintSet *, FunctionContext,
-                         TaintDepGraph *);
+                         TaintDepGraph *, PtrMap *);
   void analyzeLoop(BasicBlock *, FunctionTaintSet *, FunctionContext,
-                   LoopInfo &loopInfo, TaintDepGraph *);
+                   LoopInfo &loopInfo, TaintDepGraph *, PtrMap *);
   // Analyze each function one by one. We will use a lattice-based fixpoint
   // iterative, inter-procedural data flow analysis.
   // TODO:

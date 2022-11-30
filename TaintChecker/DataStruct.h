@@ -63,13 +63,17 @@ struct PtrDepTree {
     return false;
   }
 
-  void addToTop(PtrDepTreeNode *node) { top_base_pointers.push_back(node); }
+  void addToTop(Value *val) {
+    PtrDepTreeNode *base_node = new PtrDepTreeNode(val);
+    top_base_pointers.push_back(base_node);
+  }
 
   void removeElementFromRoot(Value *key) {
     vector<PtrDepTreeNode *> temp_vector;
     for (int i = 0; i < top_base_pointers.size(); i++) {
       temp_vector.push_back(top_base_pointers[i]);
     }
+
     top_base_pointers.clear();
     for (int j = 0; j < temp_vector.size(); j++) {
       if (temp_vector[j]->val != key) {
@@ -79,7 +83,6 @@ struct PtrDepTree {
   }
 
   void printTopBasePtrList() {
-    dprintf(1, "^^^^^ I am printing out the pointer tree\n");
     dprintf(1, "*********** start print current top level base pointers "
                "*************\n");
     for (int i = 0; i < top_base_pointers.size(); i++) {
@@ -96,7 +99,6 @@ struct PtrDepTree {
                "*************\n");
   }
   void printSecondLevelPtrList() {
-    dprintf(1, "^^^^^ I am printing out the second level of the tree\n");
     dprintf(1, "*********** start print the second level of the tree "
                "*************\n");
     int size = 0;
@@ -130,7 +132,9 @@ struct PtrMap {
   PtrDepTree *ptrTree = new PtrDepTree();
 
   // Constructor
-  PtrMap() {}
+  Function *F;
+
+  PtrMap(Function *_F) : F{_F} {}
 
   // insert a new pair
   void insert(Value *key, Value *val) {
@@ -242,9 +246,8 @@ struct PtrMap {
 
   // print the map
   void printMap() {
-    dprintf(1, "^^^^^ I am printing out the pointer map\n");
-    dprintf(1, "*********** start print pointer map "
-               "*************\n");
+    dprintf(1, "*********** start print pointer map of function ",
+            F->getName().str().c_str(), " *************\n");
     for (std::pair<Value *, vector<Value *>> element : pointerSet) {
       if (element.first != NULL) {
         dprintf(1, "--> key: ", llvmToString(element.first).c_str(), "\n");
@@ -261,5 +264,13 @@ struct PtrMap {
     dprintf(1, "^^^^^ map size: ", to_string(pointerSet.size()).c_str(), "\n");
     dprintf(1, "*********** end print pointer map "
                "*************\n");
+  }
+
+  // print the ptrTree
+  void printTree() {
+    dprintf(1, "^^^^^ I am printing out the pointer tree of function ",
+            F->getName().str().c_str(), "\n");
+    ptrTree->printTopBasePtrList();
+    ptrTree->printSecondLevelPtrList();
   }
 };

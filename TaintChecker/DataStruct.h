@@ -138,18 +138,36 @@ struct PtrMap {
 
   // insert a new pair
   void insert(Value *key, Value *val) {
+    dprintf(1, "<inserting>: \n");
+    if (key != NULL &&
+        !(key->getType()->isPointerTy() || key->getType()->isArrayTy() ||
+          key->getType()->isStructTy())) {
+      dprintf(1, "key is not a pointer type....should not insert\n");
+      return;
+    }
+    if (val != NULL &&
+        !(val->getType()->isPointerTy() || val->getType()->isArrayTy() ||
+          val->getType()->isStructTy())) {
+      dprintf(1, "val is not a pointer type....should not insert\n");
+      return;
+    }
     if (key == NULL) {
+      dprintf(1, "key is NULL\n");
       return;
     }
     if (val == NULL) {
+      dprintf(1, "val is NULL\n");
       // directly add into map since it is from an alloca inst
       vector<Value *> val_list;
       pointerSet.insert({key, val_list});
     } else {
+      dprintf(1, "val and key are not NULL\n");
       // check if the val is a base pointer in root or not
       if (ptrTree->isRoot(val)) {
+        dprintf(1, "val is root\n");
         // push directly into vector
         if (pointerSet.find(key) != pointerSet.end()) {
+          dprintf(1, "find in the map\n");
           // this key has already in the map
           pointerSet.find(key)->second.push_back(val);
         } else {
@@ -160,28 +178,43 @@ struct PtrMap {
       } else {
         // not a root, find the base of val and copy the base as the base of key
         if (pointerSet.find(key) != pointerSet.end()) {
-          vector<Value *> baseOfVal = pointerSet.find(val)->second;
-          vector<Value *> baseOfKey = pointerSet.find(key)->second;
-          for (int i = 0; i < baseOfVal.size(); i++) {
-            if (!containVal(baseOfKey, baseOfVal[i])) {
-              pointerSet.find(key)->second.push_back(baseOfVal[i]);
+          if (pointerSet.find(val) != pointerSet.end()) {
+            vector<Value *> baseOfVal = pointerSet.find(val)->second;
+            vector<Value *> baseOfKey = pointerSet.find(key)->second;
+            for (int i = 0; i < baseOfVal.size(); i++) {
+              if (!containVal(baseOfKey, baseOfVal[i])) {
+                pointerSet.find(key)->second.push_back(baseOfVal[i]);
+              }
             }
+          } else {
+            pointerSet.find(key)->second.push_back(val);
           }
         } else {
-          vector<Value *> baseOfVal = pointerSet.find(val)->second;
-          vector<Value *> baseOfKey;
-          for (int i = 0; i < baseOfVal.size(); i++) {
-            baseOfKey.push_back(baseOfVal[i]);
+          if (pointerSet.find(val) != pointerSet.end()) {
+            vector<Value *> baseOfVal = pointerSet.find(val)->second;
+            vector<Value *> baseOfKey;
+            for (int i = 0; i < baseOfVal.size(); i++) {
+              baseOfKey.push_back(baseOfVal[i]);
+            }
+            pointerSet.insert({key, baseOfKey});
+          } else {
+            vector<Value *> val_list;
+            val_list.push_back(val);
+            pointerSet.insert({key, val_list});
           }
-          pointerSet.insert({key, baseOfKey});
         }
       }
       if (ptrTree->isRoot(key)) {
         // need to remove the entry for key that was a root before
         // since val is not NULL, the allocated key is not a root anymore
-        ptrTree->removeElementFromRoot(key);
+        // if the val is not a previous pointer from map, we don't delete root
+        if (pointerSet.find(val) != pointerSet.end()) {
+          ptrTree->removeElementFromRoot(key);
+        }
       }
     }
+    printMap();
+    // ptrTree->printTopBasePtrList();
   }
 
   // check if a vector contains a val or not
@@ -205,22 +238,21 @@ struct PtrMap {
 
   // construct a pointer tree at the end of each function using pointerSet map
   void constructTree() {
+    dprintf(1, "[CONSTRUCT TREE]\n");
     for (std::pair<Value *, vector<Value *>> element : pointerSet) {
       Value *key = element.first;
-      vector<Value *> val_list = element.second;
-      if (key != NULL) {
-        if (!val_list.empty()) {
-          PtrDepTreeNode *new_second_level_node = new PtrDepTreeNode(key);
-          for (int i = 0; i < val_list.size(); i++) {
+      dprintf(1, "<key>: ", llvmToString(key).c_str(), "\n");
+      if (!ptrTree->isRoot(key)) {
+        vector<Value *> val_list = element.second;
+        printValVector(val_list);
+        PtrDepTreeNode *new_second_level_node = new PtrDepTreeNode(key);
+        for (int i = 0; i < val_list.size(); i++) {
+          if (pointerSet.find(val_list[i]) != pointerSet.end()) {
             PtrDepTreeNode *root_node = getNodeByValue(val_list[i]);
             root_node->addChild(new_second_level_node);
             new_second_level_node->addParent(root_node);
           }
-        } else {
-          continue;
         }
-      } else {
-        return;
       }
     }
   }
@@ -234,14 +266,6 @@ struct PtrMap {
       dprintf(1, " /// ", llvmToString(list[i]).c_str());
     }
     dprintf(1, " \n");
-  }
-
-  // check if a pointer in pointer map is a base pointer
-  bool isBasePointer(Value *key) {
-    if (pointerSet.find(key) == pointerSet.end()) {
-      return false;
-    }
-    return pointerSet.find(key)->second.empty();
   }
 
   // print the map

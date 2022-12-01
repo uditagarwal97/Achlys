@@ -103,3 +103,26 @@ int getSourceCodeLine(Instruction *I) {
 
   return line;
 }
+
+bool isAllocInst(auto inst) {
+  if (auto tempInst = dyn_cast<AllocaInst>(inst)) {
+    return true;
+  }
+  return false;
+}
+
+bool isValidPtrType(auto inst) {
+  if (auto tempInst = dyn_cast<AllocaInst>(inst)) {
+    if ((tempInst->getAllocatedType()->isPointerTy() ||
+         tempInst->getAllocatedType()->isArrayTy() ||
+         tempInst->getAllocatedType()->isStructTy())) {
+      return true;
+    }
+  } else {
+    if ((inst->getType()->isPointerTy() || inst->getType()->isArrayTy() ||
+         inst->getType()->isStructTy())) {
+      return true;
+    }
+  }
+  return false;
+}

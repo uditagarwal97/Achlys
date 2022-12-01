@@ -72,11 +72,34 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
   // Handle Store Instruction.
   if (auto si = dyn_cast<StoreInst>(i)) {
-
+    dprintf(1, "[STORE_DEP] I am a store inst\n");
+    dprintf(1, "[STORE_DEP] current inst: ", llvmToString(si).c_str(), " \n");
     // What are you storing?
     auto valToStore = si->getOperand(0);
     // Where are you storing?
     auto storeLocation = si->getOperand(1);
+
+    dprintf(1, "[STORE_DEP] first operand(valToStore) at inst: ",
+            llvmToString(valToStore).c_str(), "\n");
+    dprintf(1, "[STORE_DEP] second operand(storeLocation) at inst: ",
+            llvmToString(storeLocation).c_str(), "\n");
+
+    if (isValidPtrType(valToStore) && isValidPtrType(storeLocation)) {
+      if (!isa<Constant>(valToStore)) {
+        // const Constant *CI = dyn_cast<Constant>(valToStore);
+        // if (CI->isNullValue()) {
+        //   dprintf(1, "[STORE_DEP] has null value: ",
+        //           llvmToString(valToStore).c_str(), " \n");
+        // }
+        dprintf(1, "[STORE_DEP] can insert\n");
+        pointerMap->insert(storeLocation, valToStore);
+      } else {
+        dprintf(1, "[STORE_DEP] not insert\n");
+      }
+    } else {
+      dprintf(1, "[STORE_DEP] key or val is not a pointer type....should "
+                 "not insert\n");
+    }
 
     // [Taint Propogation] If what you are storing is tainted, then mark the
     // store location as tainted.
@@ -97,7 +120,8 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
   // Handle Load Instruction.
   else if (auto li = dyn_cast<LoadInst>(i)) {
-    dprintf(1, "##### IN load inst\n");
+    dprintf(1, "[LOAD_DEP] I am a load inst\n");
+    dprintf(1, "[LOAD_DEP] current inst: ", llvmToString(li).c_str(), " \n");
     // Where are you loading from?
     auto loadLocation = li->getOperand(0);
 
@@ -111,19 +135,38 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
         Instruction *ins = res.getResult().getInst();
         if (auto ssi = dyn_cast<StoreInst>(ins)) {
           // FIXME_START: for debugging only, remove later
-          dprintf(1, "[MEM_DEP] Found at inst: ", llvmToString(ssi).c_str(),
+          dprintf(1, "[LOAD_DEP] Found at inst: ", llvmToString(ssi).c_str(),
                   "\n");
           // FIXME_END
           // What are you storing?
           auto src_val = ssi->getOperand(0);
           auto des_val = ssi->getOperand(1);
+          dprintf(1, "[LOAD_DEP] first operand(src) at inst: ",
+                  llvmToString(src_val).c_str(), "\n");
+          dprintf(1, "[LOAD_DEP] second operand(des) at inst: ",
+                  llvmToString(des_val).c_str(), "\n");
 
-          pointerMap->insert(des_val, src_val);
+          if (isValidPtrType(src_val) && isValidPtrType(des_val)) {
+            if (!isa<Constant>(src_val)) {
+              pointerMap->insert(des_val, src_val);
+            }
+          } else {
+            dprintf(1, "[LOAD_DEP] key or val is not a pointer type....should "
+                       "not insert\n");
+          }
 
           fc->checkAndPropagateTaint(li, {src_val});
           depGraph->checkAndPropogateTaint(li, {src_val});
         }
       }
+    }
+
+    // we also need to store the pointer pair for the current load inst
+    dprintf(1, "[LOAD_DEP] load location: ", llvmToString(loadLocation).c_str(),
+            "\n");
+
+    if (isValidPtrType(loadLocation)) {
+      pointerMap->insert(li, loadLocation);
     }
 
     // [Taint Propogation] If you are loading from a tainted location, mark
@@ -311,7 +354,9 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     dprintf(1, "current inst: ", llvmToString(i).c_str(), " \n");
 
     if (alloc_inst->getAllocatedType()->isPointerTy() ||
-        alloc_inst->getAllocatedType()->isArrayTy()) {
+        alloc_inst->getAllocatedType()->isArrayTy() ||
+        alloc_inst->getAllocatedType()->isStructTy()) {
+      dprintf(1, "base inst: ", llvmToString(i).c_str(), " \n");
       pointerMap->ptrTree->addToTop(alloc_inst);
       pointerMap->insert(alloc_inst, NULL);
     }

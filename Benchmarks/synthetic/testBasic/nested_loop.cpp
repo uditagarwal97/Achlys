@@ -16,7 +16,7 @@ int main(int argc, char **argv)
         cout << "Pass a floating-point number\n. Aborting.\n";
         exit(1);
     }
-    
+
     volatile float initial_taint = atof(argv[1]);
 
     float a, b = 1, c=30;

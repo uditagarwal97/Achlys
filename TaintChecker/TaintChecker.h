@@ -308,7 +308,7 @@ struct TaintDepGraph {
             F->getName().str().c_str(), " \n\n");
 
     for (auto node : topLevelNodes) {
-      dprintf(logLevel, "\033[0;33m Top level node: \033[0m",
+      dprintf(logLevel, addColor("Top level node: ", "blue").c_str(),
               llvmToString(node->val).c_str());
 
       if (node->attr.isArgumentNode) {
@@ -331,7 +331,7 @@ struct TaintDepGraph {
       dprintf(logLevel, "------------------------------------\n");
 
       for (auto child : node->children) {
-        dprintf(logLevel, "\033[0;33m Child: \033[0m",
+        dprintf(logLevel, addColor("Child: ", "cyan").c_str(),
                 llvmToString(child->val).c_str());
 
         if (child->attr.isReturnValue) {
@@ -677,6 +677,16 @@ struct AchlysTaintChecker : public ModulePass {
       return true;
 
     return false;
+  }
+
+  bool isHeapAllocator(Function &F) {
+
+      string funcName = F.getName().str();
+
+      if (funcName == "malloc" || funcName == "calloc" || funcName == "realloc")
+        return true;
+
+      return false;
   }
 
   // Single exit point for our analysis pass.

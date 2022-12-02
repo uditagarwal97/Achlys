@@ -40,7 +40,9 @@ struct PtrDepTreeNode {
 
   void addChild(PtrDepTreeNode *node) { children.push_back(node); }
 
-  void printPtrNode() { dprintf(1, llvmToString(val).c_str(), "\n"); }
+  void printPtrNode(int logLevel = 3) {
+    dprintf(logLevel, llvmToString(val).c_str(), "\n");
+  }
 };
 
 // This data structure is used to store the tree like structure of derived
@@ -82,22 +84,24 @@ struct PtrDepTree {
     }
   }
 
-  void printTopBasePtrList() {
-    dprintf(1, "*********** start print current top level base pointers "
-               "*************\n");
+  void printTopBasePtrList(int logLevel) {
+
+    // Print the top base pointers
     for (int i = 0; i < top_base_pointers.size(); i++) {
-      dprintf(1, "--> root: ");
-      top_base_pointers[i]->printPtrNode();
+      dprintf(logLevel, addColor("\nTop level node: ", "blue").c_str());
+      top_base_pointers[i]->printPtrNode(logLevel);
+
+      dprintf(logLevel, "------------------------------------\n");
+
+      // Print the children
       for (int j = 0; j < top_base_pointers[i]->children.size(); j++) {
-        dprintf(1, "--> child: ");
-        top_base_pointers[i]->children[j]->printPtrNode();
+        dprintf(logLevel, addColor("Child: ", "cyan").c_str());
+        top_base_pointers[i]->children[j]->printPtrNode(logLevel);
       }
     }
-    dprintf(1, "^^^^^ top node size: ",
-            to_string(top_base_pointers.size()).c_str(), "\n");
-    dprintf(1, "*********** end print current top level base pointers "
-               "*************\n");
+    dprintf(logLevel, "------------------------------------\n");
   }
+
   void printSecondLevelPtrList() {
     dprintf(1, "*********** start print the second level of the tree "
                "*************\n");
@@ -138,36 +142,34 @@ struct PtrMap {
 
   // insert a new pair
   void insert(Value *key, Value *val) {
-    dprintf(1, "<inserting>: \n");
+
     if (key != NULL &&
         !(key->getType()->isPointerTy() || key->getType()->isArrayTy() ||
           key->getType()->isStructTy())) {
-      dprintf(1, "key is not a pointer type....should not insert\n");
+
       return;
     }
     if (val != NULL &&
         !(val->getType()->isPointerTy() || val->getType()->isArrayTy() ||
           val->getType()->isStructTy())) {
-      dprintf(1, "val is not a pointer type....should not insert\n");
+
       return;
     }
     if (key == NULL) {
-      dprintf(1, "key is NULL\n");
       return;
     }
     if (val == NULL) {
-      dprintf(1, "val is NULL\n");
       // directly add into map since it is from an alloca inst
       vector<Value *> val_list;
       pointerSet.insert({key, val_list});
     } else {
-      dprintf(1, "val and key are not NULL\n");
+
       // check if the val is a base pointer in root or not
       if (ptrTree->isRoot(val)) {
-        dprintf(1, "val is root\n");
+
         // push directly into vector
         if (pointerSet.find(key) != pointerSet.end()) {
-          dprintf(1, "find in the map\n");
+
           // this key has already in the map
           pointerSet.find(key)->second.push_back(val);
         } else {
@@ -213,7 +215,7 @@ struct PtrMap {
         }
       }
     }
-    printMap();
+    // printMap();
     // ptrTree->printTopBasePtrList();
   }
 
@@ -238,14 +240,13 @@ struct PtrMap {
 
   // construct a pointer tree at the end of each function using pointerSet map
   void constructTree() {
-    dprintf(1, "[CONSTRUCT TREE]\n");
     for (std::pair<Value *, vector<Value *>> element : pointerSet) {
       Value *key = element.first;
-      dprintf(1, "<key>: ", llvmToString(key).c_str(), "\n");
+
       if (!ptrTree->isRoot(key)) {
         vector<Value *> val_list = element.second;
-        printValVector(val_list);
         PtrDepTreeNode *new_second_level_node = new PtrDepTreeNode(key);
+
         for (int i = 0; i < val_list.size(); i++) {
           if (pointerSet.find(val_list[i]) != pointerSet.end()) {
             PtrDepTreeNode *root_node = getNodeByValue(val_list[i]);
@@ -291,10 +292,9 @@ struct PtrMap {
   }
 
   // print the ptrTree
-  void printTree() {
-    dprintf(1, "^^^^^ I am printing out the pointer tree of function ",
-            F->getName().str().c_str(), "\n");
-    ptrTree->printTopBasePtrList();
-    ptrTree->printSecondLevelPtrList();
+  void printTree(int logLevel = 3) {
+    dprintf(logLevel, "Printing memory dependency tree from function ",
+            F->getName().str().c_str(), "\n\n");
+    ptrTree->printTopBasePtrList(logLevel);
   }
 };

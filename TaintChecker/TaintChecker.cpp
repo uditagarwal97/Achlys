@@ -72,17 +72,11 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
   // Handle Store Instruction.
   if (auto si = dyn_cast<StoreInst>(i)) {
-    dprintf(1, "[STORE_DEP] I am a store inst\n");
-    dprintf(1, "[STORE_DEP] current inst: ", llvmToString(si).c_str(), " \n");
+
     // What are you storing?
     auto valToStore = si->getOperand(0);
     // Where are you storing?
     auto storeLocation = si->getOperand(1);
-
-    dprintf(1, "[STORE_DEP] first operand(valToStore) at inst: ",
-            llvmToString(valToStore).c_str(), "\n");
-    dprintf(1, "[STORE_DEP] second operand(storeLocation) at inst: ",
-            llvmToString(storeLocation).c_str(), "\n");
 
     if (isValidPtrType(valToStore) && isValidPtrType(storeLocation)) {
       if (!isa<Constant>(valToStore)) {
@@ -91,14 +85,8 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
         //   dprintf(1, "[STORE_DEP] has null value: ",
         //           llvmToString(valToStore).c_str(), " \n");
         // }
-        dprintf(1, "[STORE_DEP] can insert\n");
         pointerMap->insert(storeLocation, valToStore);
-      } else {
-        dprintf(1, "[STORE_DEP] not insert\n");
       }
-    } else {
-      dprintf(1, "[STORE_DEP] key or val is not a pointer type....should "
-                 "not insert\n");
     }
 
     // [Taint Propogation] If what you are storing is tainted, then mark the
@@ -120,8 +108,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
   // Handle Load Instruction.
   else if (auto li = dyn_cast<LoadInst>(i)) {
-    dprintf(1, "[LOAD_DEP] I am a load inst\n");
-    dprintf(1, "[LOAD_DEP] current inst: ", llvmToString(li).c_str(), " \n");
+
     // Where are you loading from?
     auto loadLocation = li->getOperand(0);
 
@@ -134,25 +121,15 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
       if (res.getResult().isClobber() || res.getResult().isDef()) {
         Instruction *ins = res.getResult().getInst();
         if (auto ssi = dyn_cast<StoreInst>(ins)) {
-          // FIXME_START: for debugging only, remove later
-          dprintf(1, "[LOAD_DEP] Found at inst: ", llvmToString(ssi).c_str(),
-                  "\n");
-          // FIXME_END
+
           // What are you storing?
           auto src_val = ssi->getOperand(0);
           auto des_val = ssi->getOperand(1);
-          dprintf(1, "[LOAD_DEP] first operand(src) at inst: ",
-                  llvmToString(src_val).c_str(), "\n");
-          dprintf(1, "[LOAD_DEP] second operand(des) at inst: ",
-                  llvmToString(des_val).c_str(), "\n");
 
           if (isValidPtrType(src_val) && isValidPtrType(des_val)) {
             if (!isa<Constant>(src_val)) {
               pointerMap->insert(des_val, src_val);
             }
-          } else {
-            dprintf(1, "[LOAD_DEP] key or val is not a pointer type....should "
-                       "not insert\n");
           }
 
           fc->checkAndPropagateTaint(li, {src_val});
@@ -160,10 +137,6 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
         }
       }
     }
-
-    // we also need to store the pointer pair for the current load inst
-    dprintf(1, "[LOAD_DEP] load location: ", llvmToString(loadLocation).c_str(),
-            "\n");
 
     if (isValidPtrType(loadLocation)) {
       pointerMap->insert(li, loadLocation);
@@ -185,11 +158,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     // resulting pointer as tainted as well.
     fc->checkAndPropagateTaint(gep, {val});
     depGraph->checkAndPropogateTaint(gep, {val});
-    // FIXME_START: dor debugging only, remove later
-    dprintf(1, "^^^^^ I am in GetElementPtrInst\n");
-    dprintf(1, "Current inst is : ", llvmToString(gep).c_str(), "\n");
-    dprintf(1, "The base pointer is : ", llvmToString(val).c_str(), "\n");
-    // FIXME_END
+
     pointerMap->insert(gep, val);
   }
 
@@ -229,6 +198,9 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     auto firstOperand = i->getOperand(0);
     fc->checkAndPropagateTaint(i, {firstOperand});
     depGraph->checkAndPropogateTaint(i, {firstOperand});
+
+    // Add to MemDep Graph, if feasible.
+    pointerMap->insert(i, firstOperand);
   }
 
   // Hanlde comparision instruction.
@@ -303,6 +275,11 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
           fc->checkAndPropagateTaint(ci, {});
           depGraph->addTaintSource(ci);
         }
+      }
+      // Check if this function is a heap allocator like malloc() etc.
+      else if (isHeapAllocator(*callee)) {
+        pointerMap->ptrTree->addToTop(ci);
+        pointerMap->insert(ci, NULL);
       } else {
 
         bool isArgTainted = false;
@@ -349,14 +326,11 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
   // Hanlde pointer allocation
   else if (auto alloc_inst = dyn_cast<AllocaInst>(i)) {
-    dprintf(1, "***** I am a alloc inst\n");
-    errs() << *(alloc_inst->getAllocatedType()) << "\n";
-    dprintf(1, "current inst: ", llvmToString(i).c_str(), " \n");
 
     if (alloc_inst->getAllocatedType()->isPointerTy() ||
         alloc_inst->getAllocatedType()->isArrayTy() ||
         alloc_inst->getAllocatedType()->isStructTy()) {
-      dprintf(1, "base inst: ", llvmToString(i).c_str(), " \n");
+
       pointerMap->ptrTree->addToTop(alloc_inst);
       pointerMap->insert(alloc_inst, NULL);
     }
@@ -517,7 +491,7 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc) {
   depGraph->printGraph(2);
 
   // FIXME_START: for debugging only, remove later
-  pointerMap->printMap();
+  // pointerMap->printMap();
   pointerMap->constructTree();
   pointerMap->printTree();
   // FIXME_END

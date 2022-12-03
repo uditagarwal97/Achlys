@@ -154,7 +154,7 @@ struct TaintDepGraph {
 
   // Add valToBeTainted to the graph, if atleast one of the value in dependsVals
   // is tainted.
-  void checkAndPropogateTaint(Value *valToBeTainted,
+  void checkAndPropagateTaint(Value *valToBeTainted,
                               vector<Value *> dependVals) {
 
     // check if valToBeTainted is already tainted.
@@ -343,10 +343,10 @@ struct TaintDepGraph {
 
       if (isNodeInGraph) {
         // Add nodes to taint graph.
-        checkAndPropogateTaint(tlNode->val, {topNode->val});
+        checkAndPropagateTaint(tlNode->val, {topNode->val});
 
         for (auto child : tlNode->children) {
-          checkAndPropogateTaint(child->val, {topNode->val});
+          checkAndPropagateTaint(child->val, {topNode->val});
         }
       }
     }
@@ -548,8 +548,10 @@ struct FunctionTaintSet {
       taintSet.insert({valueToBeTainted, depends});
       hasChanged = true;
 
-      if (oldDepends != depends)
+      if (oldDepends != depends){
+        errs () << "Taint changed for " << *valueToBeTainted << "\n";
         taintChanged = true;
+      }
 
       if (taintChanged && loopTaintsChanged.size() > 0) {
         loopTaintsChanged.pop();

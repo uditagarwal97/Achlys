@@ -93,7 +93,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     // [Taint Propogation] If what you are storing is tainted, then mark the
     // store location as tainted.
     taintSet->checkAndPropagateTaint(storeLocation, {valToStore});
-    depGraph->checkAndPropogateTaint(storeLocation, {valToStore});
+    depGraph->checkAndPropagateTaint(storeLocation, {valToStore});
 
     // [Taint Eviction] If you are storing an untainted value to a tainted
     // location, then remove the taint of the location.
@@ -134,7 +134,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
           }
 
           taintSet->checkAndPropagateTaint(li, {src_val});
-          depGraph->checkAndPropogateTaint(li, {src_val});
+          depGraph->checkAndPropagateTaint(li, {src_val});
         }
       }
     }
@@ -146,7 +146,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     // [Taint Propogation] If you are loading from a tainted location, mark
     // loaded value as tainted as well.
     taintSet->checkAndPropagateTaint(li, {loadLocation});
-    depGraph->checkAndPropogateTaint(li, {loadLocation});
+    depGraph->checkAndPropagateTaint(li, {loadLocation});
   }
 
   // Hanlde GetElementPointer (GEP) instruction. GEP is used for creating a
@@ -158,7 +158,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     // [Taint Propogation] If you are referencing a tainted variable, mark the
     // resulting pointer as tainted as well.
     taintSet->checkAndPropagateTaint(gep, {val});
-    depGraph->checkAndPropogateTaint(gep, {val});
+    depGraph->checkAndPropagateTaint(gep, {val});
 
     pointerMap->insert(gep, val);
     if (pointerMap->pointerSet.find(val) != pointerMap->pointerSet.end()) {
@@ -170,7 +170,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
           if (std::find(ii->second.begin(), ii->second.end(), parent) !=
               ii->second.end()) {
             taintSet->checkAndPropagateTaint(gep, {ii->first});
-            depGraph->checkAndPropogateTaint(gep, {ii->first});
+            depGraph->checkAndPropagateTaint(gep, {ii->first});
           }
         }
       }
@@ -187,7 +187,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
       incomingValues.push_back(phi->getIncomingValue(i));
     }
     taintSet->checkAndPropagateTaint(phi, incomingValues);
-    depGraph->checkAndPropogateTaint(phi, incomingValues);
+    depGraph->checkAndPropagateTaint(phi, incomingValues);
   }
 
   // Handle Binary operator like add, sub, mul, div, fdiv, etc.
@@ -202,7 +202,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
       // [Taint Propogation] If any of the two operands is tainted, then the
       // resulting value will also be tainted.
       taintSet->checkAndPropagateTaint(bo, {firstOperand, secondOperand});
-      depGraph->checkAndPropogateTaint(bo, {firstOperand, secondOperand});
+      depGraph->checkAndPropagateTaint(bo, {firstOperand, secondOperand});
     }
 
     // Check for NaN sources.
@@ -213,7 +213,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
       taintSet->addNaNSource(bo);
       taintSet->checkAndPropagateTaint(bo, {secondOperand, firstOperand});
-      depGraph->checkAndPropogateTaint(bo, {secondOperand, firstOperand});
+      depGraph->checkAndPropagateTaint(bo, {secondOperand, firstOperand});
       depGraph->markValueAsNaNSource(bo);
     }
   }
@@ -225,7 +225,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
     auto firstOperand = i->getOperand(0);
     taintSet->checkAndPropagateTaint(i, {firstOperand});
-    depGraph->checkAndPropogateTaint(i, {firstOperand});
+    depGraph->checkAndPropagateTaint(i, {firstOperand});
 
     // Add to MemDep Graph, if feasible.
     pointerMap->insert(i, firstOperand);
@@ -237,7 +237,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     auto firstOperand = ci->getOperand(0);
     auto secondOperand = ci->getOperand(1);
     taintSet->checkAndPropagateTaint(i, {firstOperand, secondOperand});
-    depGraph->checkAndPropogateTaint(i, {firstOperand, secondOperand});
+    depGraph->checkAndPropagateTaint(i, {firstOperand, secondOperand});
   }
 
   // Handle Call instruction.
@@ -325,13 +325,13 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
           if (isArgTainted) {
             taintSet->addNaNSource(ci);
             taintSet->taintFunctionReturnValue(ci, {});
-            depGraph->checkAndPropogateTaint(ci, taintedARgs);
+            depGraph->checkAndPropagateTaint(ci, taintedARgs);
             depGraph->markValueAsNaNSource(ci);
           }
         } else {
           if (isArgTainted) {
             taintSet->checkAndPropagateTaint(ci, {});
-            depGraph->checkAndPropogateTaint(ci, taintedARgs);
+            depGraph->checkAndPropagateTaint(ci, taintedARgs);
           }
         }
       }
@@ -346,7 +346,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
       Value *vl = ri->getOperand(0);
       fcxt->retVal = vl;
       taintSet->checkAndPropagateTaint(ri, {vl});
-      depGraph->checkAndPropogateTaint(ri, {vl});
+      depGraph->checkAndPropagateTaint(ri, {vl});
       depGraph->markReturnValue(ri);
     }
 
@@ -398,6 +398,7 @@ void AchlysTaintChecker::analyzeLoop(BasicBlock *bb, FunctionTaintSet *taintSet,
           "\n");
   int loopUnrollCount = 0;
   while (taintSet->getCurrentLoopTaintsChanged()) {
+    taintSet->summarize(4);
     ++loopUnrollCount;
     dprintf(2, "\033[0;33m[LOOP] Unroll Count: \033[0m",
             to_string(loopUnrollCount).c_str(), " for depth of ",
@@ -557,19 +558,36 @@ void AchlysTaintChecker::analyzeControlFlow(Function *F, FunctionContext *fc,
 
       unsigned int numIncoming = phi->getNumIncomingValues();
       set<BasicBlock*> incomingBBs;
+
       // Analyze control flow for each incoming value
       for (unsigned int i = 0; i < numIncoming; i++){
 
         Value *incomingVal = phi->getIncomingValue(i);
+        dprintf(4, "Incoming Value: ", llvmToString(incomingVal).c_str(), 
+        " from basic block ", phi->getIncomingBlock(i)->getName().data(), "\n");
         incomingBBs.insert(phi->getIncomingBlock(i));
+      }
+      for (auto bb1 = incomingBBs.begin(); bb1 != incomingBBs.end(); ++bb1){
+        for (auto bb2 = next(bb1, 1); bb2 != incomingBBs.end(); ++bb2){
+          BasicBlock* dominator = domTree.findNearestCommonDominator(*bb1, *bb2);
+          // llvm::DominatorTree::findNearestCommonDominator(llvm::BasicBlock* const*, llvm::BasicBlock* const*)’
+          //errs()<<"Found dominator "<< *dominator<<"\n";
+          if (Instruction* ti = dyn_cast<BranchInst>(dominator->getTerminator())){
+
+            auto cmpCond = ti->getOperand(0);
+            errs()<<"Got CFD branch: "<<*cmpCond<<"\n";
+            taintSet->checkAndPropagateTaint(fc->retVal, {cmpCond});
+            depGraph->checkAndPropagateTaint(fc->retVal, {cmpCond});
+          }
+        }
       }
     }
     else if(auto li = dyn_cast<LoadInst>(fc->retVal)){
-
+      assert(false && "Not implemented for load yet");
     }
   }
 }
-// Filter attacker controlled NaN nodes to keep only those that affects the
+// Stage 3 - Filter attacker controlled NaN nodes to keep only those that affects the
 // control-flow of the program.
 void AchlysTaintChecker::filterAttackerControlledNANSources(
     AttackerControlledNAN *attackCtrlNAN) {

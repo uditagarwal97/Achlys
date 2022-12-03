@@ -102,6 +102,10 @@ struct TaintDepGraph {
 
   void addFunctionArgument(Value *v, int argNum) {
 
+    // Check if the value already exists in the graph.
+    if (valToNodeMap.find(v) != valToNodeMap.end())
+      return;
+
     // Check if the function argument is constant or not.
     if (isa<Constant>(v))
       return;
@@ -137,8 +141,11 @@ struct TaintDepGraph {
 
   void markValueAsNaNSource(Value *v, bool isDefTaintSource = false) {
     if (valToNodeMap.find(v) != valToNodeMap.end()) {
-      valToNodeMap[v]->nanStatus = TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE;
-      valToNodeMap[v]->attr.nanSourceNumber = ++nanSourceCount;
+
+      if (valToNodeMap[v]->nanStatus != TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE){
+        valToNodeMap[v]->nanStatus = TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE;
+        valToNodeMap[v]->attr.nanSourceNumber = ++nanSourceCount;
+      }
 
       if (isDefTaintSource)
         valToNodeMap[v]->type = TaintDepGraphNode::NodeType::DEF_TAINT_SOURCE;
@@ -160,6 +167,7 @@ struct TaintDepGraph {
     set<int> nanSourceDepSet;
 
     for (Value *v : dependVals) {
+
       if (valToNodeMap.find(v) != valToNodeMap.end()) {
         isTainted = true;
 
@@ -300,6 +308,44 @@ struct TaintDepGraph {
     if (valToNodeMap.find(v) != valToNodeMap.end()) {
       TaintDepGraphNode *node = valToNodeMap[v];
       node->attr.isReturnValue = true;
+    }
+  }
+
+  void mergeMemDepGraph(PtrDepTree *ptrDepTree) {
+
+    // Iterate through all top level nodes of the ptrDepTree.
+    for (auto tlNode : ptrDepTree->top_base_pointers) {
+
+      // Check if this node or any of it's child is in the ptrDepGraph.
+      bool isNodeInGraph = false;
+      TaintDepGraphNode* topNode = nullptr;
+
+      if (valToNodeMap.find(tlNode->val) != valToNodeMap.end()) {
+        isNodeInGraph = true;
+
+        topNode = valToNodeMap[tlNode->val];
+      } else {
+        for (auto child : tlNode->children) {
+          if (valToNodeMap.find(child->val) != valToNodeMap.end()) {
+            isNodeInGraph = true;
+            topNode = valToNodeMap[child->val];
+            break;
+          }
+        }
+      }
+
+      if (topNode != nullptr && !isTopLevelNode(topNode)) {
+          topNode = topNode->children[0];
+      }
+
+      if (isNodeInGraph) {
+        // Add nodes to taint graph.
+        checkAndPropogateTaint(tlNode->val, {topNode->val});
+
+        for (auto child : tlNode->children) {
+          checkAndPropogateTaint(child->val, {topNode->val});
+        }
+      }
     }
   }
 
@@ -723,7 +769,7 @@ struct AchlysTaintChecker : public ModulePass {
   // TODO:
   //    - Handle recursive function calls.
   //    - Handle pointers and data structures (Abstract memory model)
-  void analyzeFunction(Function *F, FunctionContext fc);
+  void analyzeFunction(Function *F, FunctionContext fc, bool);
 
   // Filter attacker controlled NaN nodes to keep only those that affects the
   // control-flow of the program.

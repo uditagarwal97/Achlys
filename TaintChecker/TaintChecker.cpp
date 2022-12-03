@@ -160,6 +160,20 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     depGraph->checkAndPropogateTaint(gep, {val});
 
     pointerMap->insert(gep, val);
+    if (pointerMap->pointerSet.find(val) != pointerMap->pointerSet.end()) {
+      auto parents = pointerMap->pointerSet[val];
+
+      for (auto parent : parents) {
+        for (auto ii = pointerMap->pointerSet.begin();
+             ii != pointerMap->pointerSet.end(); ++ii) {
+          if (std::find(ii->second.begin(), ii->second.end(), parent) !=
+              ii->second.end()) {
+            fc->checkAndPropagateTaint(gep, {ii->first});
+            depGraph->checkAndPropogateTaint(gep, {ii->first});
+          }
+        }
+      }
+    }
   }
 
   // Handle Binary operator like add, sub, mul, div, fdiv, etc.
@@ -180,8 +194,8 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     // Check for NaN sources.
     // Instructions like a / b can produce NaN is a and b both are tainted.
     if ((opcode == Instruction::SDiv || opcode == Instruction::FDiv) &&
-        depGraph->isTainted(secondOperand) &&
-        depGraph->isTainted(firstOperand)) {
+        (depGraph->isTainted(secondOperand) ||
+        depGraph->isTainted(firstOperand))) {
 
       fc->addNaNSource(bo);
       fc->checkAndPropagateTaint(bo, {secondOperand, firstOperand});
@@ -402,7 +416,8 @@ void AchlysTaintChecker::analyzeLoop(BasicBlock *bb, FunctionTaintSet *taintSet,
 //    - Handle recursive function calls.
 //    - Handle pointers and data structures (Abstract memory model)
 //    - Handle back-tracking and updating taint sets of caller functions.
-void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc) {
+void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc,
+                                        bool forceRecalculateSummary = false) {
   dprintf(1, "[STEP] Started Analyzing function: ",
           demangle(F->getName().str().c_str()).c_str());
 
@@ -429,7 +444,9 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc) {
     depGraph = funcTaintSummaryGraph[F];
 
     pointerMap = funcPointerMap[F];
-    return; // Don't calculate the function summary again.
+
+    if (!forceRecalculateSummary)
+      return; // Don't calculate the function summary again.
   }
 
   // Add function parameters to taint set.
@@ -487,14 +504,16 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc) {
     }
   }
 
+  // It's a hack to prevent duplicate sin the memory dependency graph.
+  if (!forceRecalculateSummary){
+    pointerMap->constructTree();
+    depGraph->mergeMemDepGraph(pointerMap->ptrTree);
+  }
+
+  pointerMap->printTree(2);
+
   taintSet.summarize(4);
   depGraph->printGraph(2);
-
-  // FIXME_START: for debugging only, remove later
-  // pointerMap->printMap();
-  pointerMap->constructTree();
-  pointerMap->printTree();
-  // FIXME_END
 
   // Add the taint set of this function to the global map.
   if (funcTaintSet.find(F) == funcTaintSet.end()) {
@@ -555,6 +574,7 @@ void AchlysTaintChecker::filterAttackerControlledNANSources(
             // Iterate through all child of all parents to find all cmp
             // instructions that directly or indirectly depends on this NaN
             // source.
+
             if (isa<CmpInst>(child->val) &&
                 find(child->attr.derivedNaNSourceId.begin(),
                      child->attr.derivedNaNSourceId.end(),
@@ -887,6 +907,7 @@ bool AchlysTaintChecker::runOnModule(Module &M) {
       funcWorklist.pop();
 
       analyzeFunction(F, fc);
+      analyzeFunction(F, fc, true);
     }
   }
 

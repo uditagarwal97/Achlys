@@ -285,6 +285,9 @@ struct TaintDepGraph {
   void addCallSiteReturnTaint(Value *retVal, Function *callee,
                               vector<Value *> taintedArgs) {
 
+    if (valToNodeMap.find(retVal) != valToNodeMap.end())
+      return;
+
     // If the return value is tainted.
     TaintDepGraphNode *node = new TaintDepGraphNode(retVal);
     node->type = TaintDepGraphNode::NodeType::POS_TAINT_SOURCE;
@@ -633,6 +636,7 @@ struct FunctionTaintSet {
 // LLVM pass declaration for taint analysis.
 struct AchlysTaintChecker : public ModulePass {
 
+  set<Function*> analyzedFunctions;
   // Worklist for functions.
   queue<pair<Function *, FunctionContext>> funcWorklist;
 
@@ -756,23 +760,23 @@ struct AchlysTaintChecker : public ModulePass {
 
   // Analyze each instruction one by one. Essentially, this function will apply
   // taint propogation and eviction policies on each instruction.
-  void analyzeInstruction(Instruction *, FunctionTaintSet *, FunctionContext,
+  void analyzeInstruction(Instruction *, FunctionTaintSet *, FunctionContext *,
                           TaintDepGraph *, PtrMap *);
 
   // Analyze each instruction one by one. Essentially, this function will apply
   // taint propogation and eviction policies on each instruction.
-  void analyzeBasicBlock(BasicBlock *, FunctionTaintSet *, FunctionContext,
+  void analyzeBasicBlock(BasicBlock *, FunctionTaintSet *, FunctionContext *,
                          TaintDepGraph *, PtrMap *);
-  void analyzeLoop(BasicBlock *, FunctionTaintSet *, FunctionContext,
+  void analyzeLoop(BasicBlock *, FunctionTaintSet *, FunctionContext *,
                    LoopInfo &loopInfo, TaintDepGraph *, PtrMap *);
   // Analyze each function one by one. We will use a lattice-based fixpoint
   // iterative, inter-procedural data flow analysis.
   // TODO:
   //    - Handle recursive function calls.
   //    - Handle pointers and data structures (Abstract memory model)
-  void analyzeFunction(Function *F, FunctionContext fc, bool);
+  void analyzeFunction(Function *F, FunctionContext *fc, bool);
 
-  void analyzeControlFlow(Function *F, FunctionContext fc,
+  void analyzeControlFlow(Function *F, FunctionContext *fc,
                           FunctionTaintSet *taintSet, TaintDepGraph *depGraph);
   // Filter attacker controlled NaN nodes to keep only those that affects the
   // control-flow of the program.

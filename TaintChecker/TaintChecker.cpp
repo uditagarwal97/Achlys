@@ -65,7 +65,7 @@ namespace achlys {
 // taint propogation and eviction policies on each instruction.
 void AchlysTaintChecker::analyzeInstruction(Instruction *i,
                                             FunctionTaintSet *taintSet,
-                                            FunctionContext fcxt,
+                                            FunctionContext *fcxt,
                                             TaintDepGraph *depGraph,
                                             PtrMap *pointerMap) {
 
@@ -177,6 +177,19 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     }
   }
 
+  // Handle Phi Node. Phi node is used for merging values from different
+  // branches.
+  else if (auto phi = dyn_cast<PHINode>(i)) {
+    // [Taint Propogation] If any of the incoming values are tainted, mark the
+    // phi node as tainted as well.
+    vector<Value *> incomingValues;
+    for (unsigned i = 0; i < phi->getNumIncomingValues(); i++) {
+      incomingValues.push_back(phi->getIncomingValue(i));
+    }
+    taintSet->checkAndPropagateTaint(phi, incomingValues);
+    depGraph->checkAndPropogateTaint(phi, incomingValues);
+  }
+
   // Handle Binary operator like add, sub, mul, div, fdiv, etc.
   // Operation like div can produce NaNs as well, beware!
   else if (auto bo = dyn_cast<BinaryOperator>(i)) {
@@ -256,7 +269,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
           argTainted.push_back(0);
 
         funcWorklist.push(
-            {callee, {ci, ci->getParent()->getParent(), argTainted}});
+          {callee, {ci, ci->getParent()->getParent(), argTainted}});
 
         // Check if this function returns some value. If yes, check if it could
         // be tainted.
@@ -331,7 +344,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     if (!ri->getParent()->getParent()->getReturnType()->isVoidTy()) {
 
       Value *vl = ri->getOperand(0);
-      fcxt.retVal = vl;
+      fcxt->retVal = vl;
       taintSet->checkAndPropagateTaint(ri, {vl});
       depGraph->checkAndPropogateTaint(ri, {vl});
       depGraph->markReturnValue(ri);
@@ -363,7 +376,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 //  Analyzes instructions in a single basic block
 void AchlysTaintChecker::analyzeBasicBlock(BasicBlock *bb,
                                            FunctionTaintSet *taintSet,
-                                           FunctionContext fc,
+                                           FunctionContext *fc,
                                            TaintDepGraph *depGraph,
                                            PtrMap *pointerMap) {
   dprintf(2, "[BasicBlock] Analyzing Basic Block ", bb->getName().data(), "\n");
@@ -375,7 +388,7 @@ void AchlysTaintChecker::analyzeBasicBlock(BasicBlock *bb,
 
 // Recursively analyzes basic block till taintSet does not change
 void AchlysTaintChecker::analyzeLoop(BasicBlock *bb, FunctionTaintSet *taintSet,
-                                     FunctionContext fc, LoopInfo &loopInfo,
+                                     FunctionContext *fc, LoopInfo &loopInfo,
                                      TaintDepGraph *depGraph,
                                      PtrMap *pointerMap) {
   unsigned int depth = loopInfo.getLoopDepth(bb);
@@ -418,7 +431,7 @@ void AchlysTaintChecker::analyzeLoop(BasicBlock *bb, FunctionTaintSet *taintSet,
 //    - Handle recursive function calls.
 //    - Handle pointers and data structures (Abstract memory model)
 //    - Handle back-tracking and updating taint sets of caller functions.
-void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc,
+void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext *fc,
                                         bool forceRecalculateSummary = false) {
   dprintf(1, "[STEP] Started Analyzing function: ",
           demangle(F->getName().str().c_str()).c_str());
@@ -452,14 +465,14 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc,
   }
 
   // Add function parameters to taint set.
-  if (fc.numArgTainted[0] != 0) {
+  if (fc->numArgTainted[0] != 0) {
 
     int argCounter = 0, idxCounter = 0;
     for (auto ii = F->arg_begin(); ii != F->arg_end(); ii++) {
       auto arg = ii;
       argCounter++;
 
-      if (fc.numArgTainted[idxCounter] == argCounter) {
+      if (fc->numArgTainted[idxCounter] == argCounter) {
 
         if (F->getName().str().find("main") != string::npos)
           taintSet.checkAndPropagateTaint(arg, {});
@@ -529,15 +542,29 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc,
           demangle(F->getName().str().c_str()).c_str(), "\n");
 }
 
-void AchlysTaintChecker::analyzeControlFlow(Function *F, FunctionContext fc,    
+void AchlysTaintChecker::analyzeControlFlow(Function *F, FunctionContext *fc,    
                           FunctionTaintSet *taintSet, TaintDepGraph *depGraph){
-  // Get basic blocks in depTree
-  if(fc.retVal != nullptr){
-    DominatorTree &domTree = getAnalysis<DominatorTreeWrapperPass>(*F).getDomTree();
-    if (auto phi = dyn_cast<PHINode>(fc.retVal)){
 
+  // Get basic blocks in depTree
+  if(fc->retVal != nullptr){
+    dprintf(4, "===============================================\n",
+            "Analyzing Control Flow for function with return value ", llvmToString(fc->retVal).c_str(),
+            "\n===============================================\n", "\n");
+  
+    DominatorTree &domTree = getAnalysis<DominatorTreeWrapperPass>(*F).getDomTree();
+
+    if (auto phi = dyn_cast<PHINode>(fc->retVal)){
+
+      unsigned int numIncoming = phi->getNumIncomingValues();
+      set<BasicBlock*> incomingBBs;
+      // Analyze control flow for each incoming value
+      for (unsigned int i = 0; i < numIncoming; i++){
+
+        Value *incomingVal = phi->getIncomingValue(i);
+        incomingBBs.insert(phi->getIncomingBlock(i));
+      }
     }
-    else if(auto li = dyn_cast<LoadInst>(fc.retVal)){
+    else if(auto li = dyn_cast<LoadInst>(fc->retVal)){
 
     }
   }
@@ -922,8 +949,12 @@ bool AchlysTaintChecker::runOnModule(Module &M) {
 
       funcWorklist.pop();
 
-      analyzeFunction(F, fc);
-      analyzeFunction(F, fc, true);
+      if (analyzedFunctions.find(F) == analyzedFunctions.end()){
+
+        analyzeFunction(F, &fc);
+        analyzeFunction(F, &fc, true);
+        analyzedFunctions.insert(F);
+      }
     }
   }
 

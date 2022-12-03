@@ -8,13 +8,14 @@ fi
 ##############################################################3
 VERBOSE=4 #Flag for logging verbose pass details
 CFLAGS="-O0 -Xclang -disable-O0-optnone"
-# OPTFLAGS="-O0 -licm -argpromotion -deadargelim -adce -always-inline -inline -mem2reg -mergereturn -dse"
+OPTFLAGS="-O0 -licm -argpromotion -deadargelim -adce -always-inline -inline -mem2reg -mergereturn -dse"
 
 if [[ "$2" == "true" ]]; then
     echo "Recompiling test case"
     $ACHLYSLLVM/clang++ -emit-llvm -S $1.cpp ${CFLAGS} -o $1.ll
 fi
 
-$ACHLYSLLVM/opt -enable-new-pm=0 -load $ACHLYSLLVM/../lib/Achlys.so -adce \
--always-inline -argpromotion -deadargelim  -inline -reg2mem -mergereturn \
--dse -basic-aa -taintanalysis -achlys-verbose=$VERBOSE -S $1.ll
+$ACHLYSLLVM/opt -enable-new-pm=0 ${OPTFLAGS} -S $1.ll -o $1.ll
+
+$ACHLYSLLVM/opt -enable-new-pm=0 -load $ACHLYSLLVM/../lib/Achlys.so \
+-basic-aa --cfl-anders-aa -taintanalysis -achlys-verbose=$VERBOSE -S $1.ll > dummy.txt

@@ -17,6 +17,7 @@
 
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Type.h"
@@ -63,7 +64,7 @@ namespace achlys {
 // Analyze each instruction one by one. Essentially, this function will apply
 // taint propogation and eviction policies on each instruction.
 void AchlysTaintChecker::analyzeInstruction(Instruction *i,
-                                            FunctionTaintSet *fc,
+                                            FunctionTaintSet *taintSet,
                                             FunctionContext fcxt,
                                             TaintDepGraph *depGraph,
                                             PtrMap *pointerMap) {
@@ -91,7 +92,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
     // [Taint Propogation] If what you are storing is tainted, then mark the
     // store location as tainted.
-    fc->checkAndPropagateTaint(storeLocation, {valToStore});
+    taintSet->checkAndPropagateTaint(storeLocation, {valToStore});
     depGraph->checkAndPropogateTaint(storeLocation, {valToStore});
 
     // [Taint Eviction] If you are storing an untainted value to a tainted
@@ -100,8 +101,8 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     // For example, if you are storing an untainted val into a tainted array
     // should we remove the taint of the entire array? Perhaps, No. Need to
     // think more about the granularity at which we are tracking taints.
-    if (fc->isTainted(storeLocation) && !(fc->isTainted(valToStore))) {
-      fc->removeTaint(storeLocation);
+    if (taintSet->isTainted(storeLocation) && !(taintSet->isTainted(valToStore))) {
+      taintSet->removeTaint(storeLocation);
       depGraph->removeTaint(storeLocation);
     }
   }
@@ -132,7 +133,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
             }
           }
 
-          fc->checkAndPropagateTaint(li, {src_val});
+          taintSet->checkAndPropagateTaint(li, {src_val});
           depGraph->checkAndPropogateTaint(li, {src_val});
         }
       }
@@ -144,7 +145,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
     // [Taint Propogation] If you are loading from a tainted location, mark
     // loaded value as tainted as well.
-    fc->checkAndPropagateTaint(li, {loadLocation});
+    taintSet->checkAndPropagateTaint(li, {loadLocation});
     depGraph->checkAndPropogateTaint(li, {loadLocation});
   }
 
@@ -156,7 +157,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
     // [Taint Propogation] If you are referencing a tainted variable, mark the
     // resulting pointer as tainted as well.
-    fc->checkAndPropagateTaint(gep, {val});
+    taintSet->checkAndPropagateTaint(gep, {val});
     depGraph->checkAndPropogateTaint(gep, {val});
 
     pointerMap->insert(gep, val);
@@ -168,7 +169,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
              ii != pointerMap->pointerSet.end(); ++ii) {
           if (std::find(ii->second.begin(), ii->second.end(), parent) !=
               ii->second.end()) {
-            fc->checkAndPropagateTaint(gep, {ii->first});
+            taintSet->checkAndPropagateTaint(gep, {ii->first});
             depGraph->checkAndPropogateTaint(gep, {ii->first});
           }
         }
@@ -187,7 +188,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     if (!isConstantInstruction(opcode, firstOperand, secondOperand)) {
       // [Taint Propogation] If any of the two operands is tainted, then the
       // resulting value will also be tainted.
-      fc->checkAndPropagateTaint(bo, {firstOperand, secondOperand});
+      taintSet->checkAndPropagateTaint(bo, {firstOperand, secondOperand});
       depGraph->checkAndPropogateTaint(bo, {firstOperand, secondOperand});
     }
 
@@ -197,8 +198,8 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
         (depGraph->isTainted(secondOperand) ||
         depGraph->isTainted(firstOperand))) {
 
-      fc->addNaNSource(bo);
-      fc->checkAndPropagateTaint(bo, {secondOperand, firstOperand});
+      taintSet->addNaNSource(bo);
+      taintSet->checkAndPropagateTaint(bo, {secondOperand, firstOperand});
       depGraph->checkAndPropogateTaint(bo, {secondOperand, firstOperand});
       depGraph->markValueAsNaNSource(bo);
     }
@@ -210,7 +211,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
   else if (isa<CastInst>(i) || isa<UnaryOperator>(i)) {
 
     auto firstOperand = i->getOperand(0);
-    fc->checkAndPropagateTaint(i, {firstOperand});
+    taintSet->checkAndPropagateTaint(i, {firstOperand});
     depGraph->checkAndPropogateTaint(i, {firstOperand});
 
     // Add to MemDep Graph, if feasible.
@@ -222,7 +223,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
     auto firstOperand = ci->getOperand(0);
     auto secondOperand = ci->getOperand(1);
-    fc->checkAndPropagateTaint(i, {firstOperand, secondOperand});
+    taintSet->checkAndPropagateTaint(i, {firstOperand, secondOperand});
     depGraph->checkAndPropogateTaint(i, {firstOperand, secondOperand});
   }
 
@@ -245,7 +246,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
         for (size_t i = 0; i < numArguments; i++) {
 
           auto arg = ci->getArgOperand(i);
-          if (fc->isTainted(arg)) {
+          if (taintSet->isTainted(arg)) {
             argTainted.push_back(i + 1);
             taintedVal.push_back(arg);
           }
@@ -260,7 +261,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
         // Check if this function returns some value. If yes, check if it could
         // be tainted.
         if (!callee->getReturnType()->isVoidTy()) {
-          fc->taintFunctionReturnValue(ci, ci);
+          taintSet->taintFunctionReturnValue(ci, ci);
           depGraph->addCallSiteReturnTaint(ci, callee, taintedVal);
         }
       }
@@ -277,7 +278,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
         if (demangle(callee->getName().str().c_str()).find("istream") !=
             string::npos) {
           Value *inpVal = ci->getArgOperand(numArguments - 1);
-          fc->checkAndPropagateTaint(inpVal, {});
+          taintSet->checkAndPropagateTaint(inpVal, {});
           depGraph->addTaintSource(inpVal);
 
           // cin can take float from user. So, it can produce NaN.
@@ -286,7 +287,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
             depGraph->markValueAsNaNSource(inpVal, true);
           }
         } else {
-          fc->checkAndPropagateTaint(ci, {});
+          taintSet->checkAndPropagateTaint(ci, {});
           depGraph->addTaintSource(ci);
         }
       }
@@ -301,7 +302,7 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
         for (size_t i = 0; i < numArguments; i++) {
 
           auto arg = ci->getArgOperand(i);
-          if (fc->isTainted(arg)) {
+          if (taintSet->isTainted(arg)) {
             isArgTainted = true;
             taintedARgs.push_back(arg);
           }
@@ -309,14 +310,14 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
 
         if (isNaNSourceFunction(*callee)) {
           if (isArgTainted) {
-            fc->addNaNSource(ci);
-            fc->taintFunctionReturnValue(ci, {});
+            taintSet->addNaNSource(ci);
+            taintSet->taintFunctionReturnValue(ci, {});
             depGraph->checkAndPropogateTaint(ci, taintedARgs);
             depGraph->markValueAsNaNSource(ci);
           }
         } else {
           if (isArgTainted) {
-            fc->checkAndPropagateTaint(ci, {});
+            taintSet->checkAndPropagateTaint(ci, {});
             depGraph->checkAndPropogateTaint(ci, taintedARgs);
           }
         }
@@ -330,12 +331,13 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     if (!ri->getParent()->getParent()->getReturnType()->isVoidTy()) {
 
       Value *vl = ri->getOperand(0);
-      fc->checkAndPropagateTaint(ri, {vl});
+      fcxt.retVal = vl;
+      taintSet->checkAndPropagateTaint(ri, {vl});
       depGraph->checkAndPropogateTaint(ri, {vl});
       depGraph->markReturnValue(ri);
     }
 
-    fc->markThisValueAsReturnValue(ri);
+    taintSet->markThisValueAsReturnValue(ri);
   }
 
   // Hanlde pointer allocation
@@ -510,8 +512,9 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc,
     depGraph->mergeMemDepGraph(pointerMap->ptrTree);
   }
 
-  pointerMap->printTree(2);
+  analyzeControlFlow(F, fc, &taintSet, depGraph);
 
+  pointerMap->printTree(2);
   taintSet.summarize(4);
   depGraph->printGraph(2);
 
@@ -526,6 +529,19 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext fc,
           demangle(F->getName().str().c_str()).c_str(), "\n");
 }
 
+void AchlysTaintChecker::analyzeControlFlow(Function *F, FunctionContext fc,    
+                          FunctionTaintSet *taintSet, TaintDepGraph *depGraph){
+  // Get basic blocks in depTree
+  if(fc.retVal != nullptr){
+    DominatorTree &domTree = getAnalysis<DominatorTreeWrapperPass>(*F).getDomTree();
+    if (auto phi = dyn_cast<PHINode>(fc.retVal)){
+
+    }
+    else if(auto li = dyn_cast<LoadInst>(fc.retVal)){
+
+    }
+  }
+}
 // Filter attacker controlled NaN nodes to keep only those that affects the
 // control-flow of the program.
 void AchlysTaintChecker::filterAttackerControlledNANSources(

@@ -436,6 +436,7 @@ struct FunctionContext {
   // that.
   Instruction *callInst;
   Function *caller;
+  Value *retVal;
 
   // Which arguments of this funtion are tainted?
   vector<int> numArgTainted;
@@ -771,6 +772,8 @@ struct AchlysTaintChecker : public ModulePass {
   //    - Handle pointers and data structures (Abstract memory model)
   void analyzeFunction(Function *F, FunctionContext fc, bool);
 
+  void analyzeControlFlow(Function *F, FunctionContext fc,
+                          FunctionTaintSet *taintSet, TaintDepGraph *depGraph);
   // Filter attacker controlled NaN nodes to keep only those that affects the
   // control-flow of the program.
   void filterAttackerControlledNANSources(AttackerControlledNAN *);

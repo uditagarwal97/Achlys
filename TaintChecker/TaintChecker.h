@@ -294,6 +294,29 @@ struct TaintDepGraph {
     node->attr.isReturnCallNode = true;
     node->attr.callNodeArgs = taintedArgs;
 
+    // If any of the argument is a tainted NaN, then conservatively mark the
+    // return value of this call site as tainted NaN. This can be filterted out
+    // during the FI stage.
+
+    bool isAnyArgNaN = false;
+    for (auto arg : taintedArgs) {
+      if (valToNodeMap.find(arg) != valToNodeMap.end()) {
+        if (valToNodeMap[arg]->nanStatus ==
+            TaintDepGraphNode::NodeNaNStatus::NAN_SOURCE ||
+            valToNodeMap[arg]->nanStatus ==
+                TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
+          isAnyArgNaN = true;
+          node->attr.derivedNaNSourceId.insert(
+              valToNodeMap[arg]->attr.derivedNaNSourceId.begin(),
+              valToNodeMap[arg]->attr.derivedNaNSourceId.end());
+          break;
+        }
+      }
+    }
+
+    if (isAnyArgNaN)
+      node->nanStatus = TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN;
+
     valToNodeMap.insert({retVal, node});
     topLevelNodes.push_back(node);
     callSiteReturnNode.push_back(node);
@@ -373,7 +396,11 @@ struct TaintDepGraph {
                 to_string(node->attr.nanSourceNumber).c_str(), " \033[0m");
       } else if (node->nanStatus ==
                  TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
-        dprintf(logLevel, " \033[0;31m (Tainted NaN) \033[0m");
+        dprintf(logLevel, " \033[0;31m (Tainted NaN) Id= ");
+        for (auto id : node->attr.derivedNaNSourceId) {
+          dprintf(logLevel, to_string(id).c_str(), " ");
+        }
+        dprintf(logLevel, " \033[0m");
       }
 
       dprintf(logLevel, "\n");
@@ -391,7 +418,11 @@ struct TaintDepGraph {
                   to_string(child->attr.nanSourceNumber).c_str(), " \033[0m");
         } else if (child->nanStatus ==
                    TaintDepGraphNode::NodeNaNStatus::TAINTED_NAN) {
-          dprintf(logLevel, " \033[0;31m (Tainted NaN) \033[0m");
+          dprintf(logLevel, " \033[0;31m (Tainted NaN) Id= ");
+          for (auto id : child->attr.derivedNaNSourceId) {
+            dprintf(logLevel, to_string(id).c_str(), " ");
+          }
+          dprintf(logLevel, " \033[0m");
         }
 
         dprintf(logLevel, "\n");

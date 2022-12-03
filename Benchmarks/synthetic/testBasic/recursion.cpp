@@ -11,7 +11,7 @@ int main(int argc, char **argv) {
     int n = round(initial_taint);
     double result = factorial(initial_taint);
     if (result > 0) {
-        cout << "Result is > 0" << endl;        
+        cout << "Result is > 0" << endl;
     }
   return 0;
 }

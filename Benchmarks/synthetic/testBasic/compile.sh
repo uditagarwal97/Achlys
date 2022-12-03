@@ -5,7 +5,7 @@ OPTFLAGS="-O0 -licm -argpromotion -deadargelim -adce -always-inline -inline -mem
 
 declare -a testCases=("intraproc" "test_pointer_exhaustive" "taintSourceTest"
                "test_inter_procedural_backtracking" "test_inter_procedural_multifun"
-               "arrayStructTestBaic" "nested_loop")
+               "arrayStructTestBaic" "nested_loop" "recursion")
 
 for str in "${testCases[@]}"
 do

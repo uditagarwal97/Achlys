@@ -543,7 +543,7 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext *fc,
           demangle(F->getName().str().c_str()).c_str(), "\n");
 }
 
-void AchlysTaintChecker::analyzeControlFlow(Function *F, FunctionContext *fc,    
+void AchlysTaintChecker::analyzeControlFlow(Function *F, FunctionContext *fc,
                           FunctionTaintSet *taintSet, TaintDepGraph *depGraph){
 
   // Get basic blocks in depTree
@@ -551,7 +551,7 @@ void AchlysTaintChecker::analyzeControlFlow(Function *F, FunctionContext *fc,
     dprintf(4, "===============================================\n",
             "Analyzing Control Flow for function with return value ", llvmToString(fc->retVal).c_str(),
             "\n===============================================\n", "\n");
-  
+
     DominatorTree &domTree = getAnalysis<DominatorTreeWrapperPass>(*F).getDomTree();
 
     if (auto phi = dyn_cast<PHINode>(fc->retVal)){
@@ -563,7 +563,7 @@ void AchlysTaintChecker::analyzeControlFlow(Function *F, FunctionContext *fc,
       for (unsigned int i = 0; i < numIncoming; i++){
 
         Value *incomingVal = phi->getIncomingValue(i);
-        dprintf(4, "Incoming Value: ", llvmToString(incomingVal).c_str(), 
+        dprintf(4, "Incoming Value: ", llvmToString(incomingVal).c_str(),
         " from basic block ", phi->getIncomingBlock(i)->getName().data(), "\n");
         incomingBBs.insert(phi->getIncomingBlock(i));
       }
@@ -653,6 +653,23 @@ void AchlysTaintChecker::filterAttackerControlledNANSources(
         }
       }
 
+      // Do an exhaustive search over all the nodes in the graph to find if
+      // there's any CMP instruction with this derviedNaNSourceId.
+      if (!isValidNaNSource) {
+        for (auto ii = depGraph->valToNodeMap.begin();
+              ii != depGraph->valToNodeMap.end(); ii++) {
+
+          TaintDepGraphNode *node = ii->second;
+          if (isa<CmpInst>(node->val) && find(node->attr.derivedNaNSourceId.begin(),
+                                              node->attr.derivedNaNSourceId.end(),
+                                              nanId) != node->attr.derivedNaNSourceId.end()) {
+
+            isValidNaNSource = true;
+            break;
+          }
+        }
+      }
+
       if (!isValidNaNSource) {
         dprintf(1, "[NEW INFO] Removing attacker controlled NaN source: ",
                 llvmToString(node->val).c_str(), "\n");
@@ -709,13 +726,13 @@ bool AchlysTaintChecker::collapseConstraints(
   // nodes and collapse the constraints.
   for (auto tlNode : depGraph->topLevelNodes) {
     if (tlNode->attr.isArgumentNode ||
-        tlNode->nanStatus == TaintDepGraphNode::NodeType::DEF_TAINT_SOURCE) {
+        tlNode->type == TaintDepGraphNode::NodeType::DEF_TAINT_SOURCE) {
 
       // Find which function arguments are 100% tainted in the given
       // function call stack.
       if (find(taintedArgs.begin(), taintedArgs.end(),
                tlNode->attr.argumentNumber) != taintedArgs.end() ||
-          tlNode->nanStatus == TaintDepGraphNode::NodeType::DEF_TAINT_SOURCE) {
+          tlNode->type == TaintDepGraphNode::NodeType::DEF_TAINT_SOURCE) {
 
         dprintf(1,
                 "[STEP] Found tainted argument or definitly a taint source: ",

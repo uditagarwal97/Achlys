@@ -762,7 +762,8 @@ struct AchlysTaintChecker : public ModulePass {
 
     string funcName = F.getName().str();
 
-    if (funcName == "atof" || funcName == "strtod" || funcName == "strtof")
+    if (funcName == "atof" || funcName == "strtod" || funcName == "strtof" ||
+        funcName == "sqrt")
       return true;
 
     return false;

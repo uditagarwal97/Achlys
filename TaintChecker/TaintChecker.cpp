@@ -317,13 +317,16 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
         for (size_t i = 0; i < numArguments; i++) {
 
           auto arg = ci->getArgOperand(i);
-          if (taintSet->isTainted(arg)) {
+          if (depGraph->isTainted(arg)) {
             isArgTainted = true;
             taintedARgs.push_back(arg);
           }
         }
 
         if (isNaNSourceFunction(*callee)) {
+
+          errs()<<"Cheking if it is a NaN source: \n"<<ci->getCalledFunction()->getName()<<"\n";
+          errs()<<isArgTainted;
           if (isArgTainted) {
             taintSet->addNaNSource(ci);
             taintSet->taintFunctionReturnValue(ci, {});
@@ -488,6 +491,13 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext *fc,
         // Remove the argument form the set.
         idxCounter++;
       }
+    }
+
+    // Check if the argument is a pointer type.
+    if (arg->getType()->isPointerTy() && !isa<Constant>(arg)) {
+      // Add the argument to the pointer map.
+      pointerMap->ptrTree->addToTop(arg);
+      pointerMap->insert(arg, NULL);
     }
 
     // Add all arguments to the dependency graph, irrespective of whether or
@@ -894,6 +904,18 @@ bool AchlysTaintChecker::collapseConstraints(
             TaintDepGraphNode *nanSourceNode = nanSource.first;
             attackCtrlNAN->addNode(nanSourceNode, f);
           }
+        }
+      }
+      else if (auto ci = dyn_cast<CallInst>(nanSourceType)) {
+
+        Function* calledFunc = ci->getCalledFunction();
+        if(isNaNSourceFunction(*calledFunc)) {
+
+          dprintf(1, "[NEW INFO] Found a nanSource with all parents tainted: ",
+                  llvmToString(nanSource.first->val).c_str(), "\n");
+
+          TaintDepGraphNode *nanSourceNode = nanSource.first;
+          attackCtrlNAN->addNode(nanSourceNode, f);
         }
       }
     }

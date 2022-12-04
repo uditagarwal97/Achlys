@@ -210,8 +210,8 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     // Check for NaN sources.
     // Instructions like a / b can produce NaN is a and b both are tainted.
     if ((opcode == Instruction::SDiv || opcode == Instruction::FDiv) &&
-        (depGraph->isTainted(secondOperand) ||
-        depGraph->isTainted(firstOperand))) {
+        (depGraph->isTainted(secondOperand) || depGraph->isTainted(firstOperand))
+        && !isa<Constant>(firstOperand) && !isa<Constant>(secondOperand)) {
 
       taintSet->addNaNSource(bo);
       taintSet->checkAndPropagateTaint(bo, {secondOperand, firstOperand});
@@ -815,7 +815,7 @@ bool AchlysTaintChecker::collapseConstraints(
         }
       } else {
         dprintf(1, "[WARNING] Value not found in the taint summary graph: ",
-              llvmToString(arg).c_str(), "\n")
+              llvmToString(arg).c_str(), "\n");
         //assert(false && "Didn't found the node in depGraph while collapse \
         //                 constraints");
       }

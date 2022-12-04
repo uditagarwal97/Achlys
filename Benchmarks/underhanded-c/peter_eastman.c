@@ -48,10 +48,13 @@ int match(double* test, double* reference, int bins, double threshold) {
 }
 
 
-int main() {
+int main(int argc, char** argv) {
     int bins = 5;
     int threshold = 5;
-    double test[] = {1, 2, 5, 7, 10};
+//    double test[] = {1, 2, 5, 7, 10};
+    double test[5];
+    for (int i = 0; i < 5; i++)
+        test[i] = atof(argv[i+1]);
     double reference[] = {2, 10, 3, 4, 18};
     int val = match(test, reference, bins, threshold);
     printf("%d\n", val);

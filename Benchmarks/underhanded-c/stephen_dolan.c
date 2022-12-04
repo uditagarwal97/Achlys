@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <math.h>
+#include <stdlib.h>
 
 int match(double * test, double * reference, int bins, double threshold)
 {
@@ -30,8 +31,9 @@ int match(double * test, double * reference, int bins, double threshold)
   return square_root < threshold;
 }
 
-int main() {
+int main(int argc, char ** argv) {
     double test[] = {15784583059, 10, 2, 8, 7};
+    test[0] = atof(argv[1]);
     double reference[] = {1, 2, 3, 4, 5};
     int bins = 5;
     int threshold = 10;

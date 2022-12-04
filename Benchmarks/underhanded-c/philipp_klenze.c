@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <math.h>
+#include <stdlib.h>
 
 long double factorial(int n)
 {
@@ -33,15 +34,14 @@ double logLikelihoodRatioSum(double * test, double * reference, int bins)
   return llq;
 }
 
-int main(){
+int main(int argc, char ** argv){
 
 	double test[]={387,1950,488,183,1878};
 	double reference[]={500,550,645,254,475};
+	for(int i = 0; i < 5; i++) {
+		test[i] = atof(argv[i+1]);
+	}
 	int bin=5;
-//	for(int i=0;i<bin;i++)
-//	{
-//		test[i]=1000*i;
-//	}
 	double res = logLikelihoodRatioSum(test,reference,bin);
         printf("Res: %lf\n", res);
 	return 0;

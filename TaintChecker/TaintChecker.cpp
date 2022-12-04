@@ -815,7 +815,7 @@ bool AchlysTaintChecker::collapseConstraints(
         }
       } else {
         dprintf(1, "[WARNING] Value not found in the taint summary graph: ",
-              llvmToString(arg).c_str(), "\n")
+              llvmToString(arg).c_str(), "\n");
         //assert(false && "Didn't found the node in depGraph while collapse \
         //                 constraints");
       }

@@ -1,6 +1,6 @@
 #include<stdio.h>
 #include <math.h>
-
+#include <stdlib.h>
 
 /* dot: dot product between x and y */
 static inline double dot(double *x, double *y, int n, unsigned int err) {
@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
 	double threshold=5;
 
   for (int i = 0; i < 5;  i++)
-    test[i] = argc;
+    test[i] = atof(argv[1]);
 
 	printf("%d\n",match(test,reference,bins,threshold));
     return 0;

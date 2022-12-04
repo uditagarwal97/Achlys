@@ -22,11 +22,15 @@ int match(double *test, double *reference, int bins, double threshold) {
     return r >= threshold ? 1 : 0; // check r against threshold for match result
 }
 
-int main() {
+int main(int argc, char** argv) {
 	double test[]={0,0,0,0,0};
 	double reference[]={1,2,3,4,5};
 	int bins=5;
 	double threshold=5;
+
+  for (int i = 0; i < 5;  i++)
+    test[i] = argc;
+
 	printf("%d\n",match(test,reference,bins,threshold));
     return 0;
 }

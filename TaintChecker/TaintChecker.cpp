@@ -466,13 +466,13 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext *fc,
   }
 
   // Add function parameters to taint set.
-  if (fc->numArgTainted[0] != 0) {
 
-    int argCounter = 0, idxCounter = 0;
-    for (auto ii = F->arg_begin(); ii != F->arg_end(); ii++) {
-      auto arg = ii;
-      argCounter++;
+  int argCounter = 0, idxCounter = 0;
+  for (auto ii = F->arg_begin(); ii != F->arg_end(); ii++) {
+    auto arg = ii;
+    argCounter++;
 
+    if (fc->numArgTainted[0] != 0) {
       if (fc->numArgTainted[idxCounter] == argCounter) {
 
         if (F->getName().str().find("main") != string::npos)
@@ -486,15 +486,15 @@ void AchlysTaintChecker::analyzeFunction(Function *F, FunctionContext *fc,
         // Remove the argument form the set.
         idxCounter++;
       }
-
-      // Add all arguments to the dependency graph, irrespective of whether or
-      // not they are tainted.
-      depGraph->addFunctionArgument(arg, argCounter);
-      // TODO: if an arg is a pointer, add it as a base pointer in the PtrTree
-      // TODO: not sure if above^ should be added, need to have a benchmark that
-      // have multiple function call to see if args in each function would
-      // become an alloca inst in .ll file
     }
+
+    // Add all arguments to the dependency graph, irrespective of whether or
+    // not they are tainted.
+    depGraph->addFunctionArgument(arg, argCounter);
+    // TODO: if an arg is a pointer, add it as a base pointer in the PtrTree
+    // TODO: not sure if above^ should be added, need to have a benchmark that
+    // have multiple function call to see if args in each function would
+    // become an alloca inst in .ll file
   }
 
   LoopInfo &loopInfo = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
@@ -575,7 +575,6 @@ void AchlysTaintChecker::analyzeControlFlow(Function *F, FunctionContext *fc,
           if (Instruction* ti = dyn_cast<BranchInst>(dominator->getTerminator())){
 
             auto cmpCond = ti->getOperand(0);
-            errs()<<"Got CFD branch: "<<*cmpCond<<"\n";
             taintSet->checkAndPropagateTaint(fc->retVal, {cmpCond});
             depGraph->checkAndPropagateTaint(fc->retVal, {cmpCond});
           }
@@ -812,9 +811,12 @@ bool AchlysTaintChecker::collapseConstraints(
         if (argNode->isNodeTaintedInCurrentStack()) {
           taintedCallArgNumber.push_back(numArgument);
         }
-      } else
-        assert(false && "Didn't found the node in depGraph while collapse \
-                          constraints");
+      } else {
+        dprintf(1, "[WARNING] Value not found in the taint summary graph: ",
+              llvmToString(arg).c_str(), "\n")
+        //assert(false && "Didn't found the node in depGraph while collapse \
+        //                 constraints");
+      }
     }
 
     // Recursively collapse constraints.
@@ -860,6 +862,38 @@ bool AchlysTaintChecker::collapseConstraints(
 
       TaintDepGraphNode *nanSourceNode = nanSource.first;
       attackCtrlNAN->addNode(nanSourceNode, f);
+    }
+    else {
+      dprintf(1, "[DEBUG] Found a nanSource with some parents not tainted: ",
+              llvmToString(nanSource.first->val).c_str(), "\n");
+
+      Instruction* nanSourceType = dyn_cast<Instruction>(nanSource.first->val);
+
+      // For floating point division, cehck if the numerator and demoninator
+      // is tainted.
+      if (isa<BinaryOperator>(nanSourceType) && (nanSourceType->getOpcode() == Instruction::FDiv ||
+          nanSourceType->getOpcode() == Instruction::SDiv)) {
+
+        auto numerator = nanSourceType->getOperand(0);
+        auto denominator = nanSourceType->getOperand(1);
+
+        if (depGraph->valToNodeMap.find(numerator) != depGraph->valToNodeMap.end() &&
+            depGraph->valToNodeMap.find(denominator) != depGraph->valToNodeMap.end()) {
+
+          TaintDepGraphNode* numeratorNode = depGraph->valToNodeMap[numerator];
+          TaintDepGraphNode* denominatorNode = depGraph->valToNodeMap[denominator];
+
+          if (numeratorNode->isNodeTaintedInCurrentStack() &&
+              denominatorNode->isNodeTaintedInCurrentStack()) {
+
+            dprintf(1, "[NEW INFO] Found a nanSource with all parents tainted: ",
+                    llvmToString(nanSource.first->val).c_str(), "\n");
+
+            TaintDepGraphNode *nanSourceNode = nanSource.first;
+            attackCtrlNAN->addNode(nanSourceNode, f);
+          }
+        }
+      }
     }
   }
 

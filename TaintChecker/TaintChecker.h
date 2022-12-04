@@ -580,7 +580,7 @@ struct FunctionTaintSet {
       hasChanged = true;
 
       if (oldDepends != depends){
-        errs () << "Taint changed for " << *valueToBeTainted << "\n";
+        //errs () << "Taint changed for " << *valueToBeTainted << "\n";
         taintChanged = true;
       }
 

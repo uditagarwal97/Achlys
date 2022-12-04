@@ -182,12 +182,14 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
   else if (auto phi = dyn_cast<PHINode>(i)) {
     // [Taint Propogation] If any of the incoming values are tainted, mark the
     // phi node as tainted as well.
-    vector<Value *> incomingValues;
+    // vector<Value *> incomingValues;
     for (unsigned i = 0; i < phi->getNumIncomingValues(); i++) {
-      incomingValues.push_back(phi->getIncomingValue(i));
+      // incomingValues.push_back(phi->getIncomingValue(i));
+      taintSet->checkAndPropagateTaint(phi, {phi->getIncomingValue(i)});
+      depGraph->checkAndPropagateTaint(phi, {phi->getIncomingValue(i)});
     }
-    taintSet->checkAndPropagateTaint(phi, incomingValues);
-    depGraph->checkAndPropagateTaint(phi, incomingValues);
+    // taintSet->checkAndPropagateTaint(phi, incomingValues);
+    // depGraph->checkAndPropagateTaint(phi, incomingValues);
   }
 
   // Handle Binary operator like add, sub, mul, div, fdiv, etc.

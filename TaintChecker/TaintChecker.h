@@ -546,7 +546,10 @@ struct FunctionTaintSet {
 
     for (Value *val : dependVals) {
 
-      if (taintSet.find(val) != taintSet.end()) {
+      if (taintSet.find(val) != taintSet.end() &&
+         (find(taintSet[valueToBeTainted].begin(), taintSet[valueToBeTainted].end(), val)
+          == taintSet[valueToBeTainted].end()))
+      {
         depends.insert(depends.begin(), taintSet[val].begin(),
                        taintSet[val].end());
         isTaint = true;
@@ -580,7 +583,6 @@ struct FunctionTaintSet {
       hasChanged = true;
 
       if (oldDepends != depends){
-        //errs () << "Taint changed for " << *valueToBeTainted << "\n";
         taintChanged = true;
       }
 

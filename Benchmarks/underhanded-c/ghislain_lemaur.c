@@ -54,14 +54,23 @@ int match(double * test, double * reference, int bins, double threshold){
         LogStr("exp=");       // LogFloat(diff_exp);
         LogStr("threshold="); // LogFloat(threshold);
         int ret = !statistic_test(SSDWR(reference, test, bins, diff_exp), threshold);
-        LogStr("result="); LogStr(ret ? "yes" : "no"); LogStr("\n");
+        LogStr("result=");
+        if (ret)
+          LogStr("yes");
+        else
+          LogStr("no");
+        LogStr("\n");
 //        LogFlush();
         return ret;
 }
-int main(){
+int main(int argc, char** argv){
 
     double test[] = {384,132,567,127,742};
     double reference[] = {578,485,848,237,731};
+
+    for (int i = 0; i < 5; i++)
+      reference[i] = argc;
+
     int bins = 5;
     double threshold = 10;
     match(test, reference, bins, threshold);

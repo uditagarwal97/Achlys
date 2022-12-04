@@ -713,8 +713,7 @@ struct AchlysTaintChecker : public ModulePass {
         opcode == Instruction::SDiv) {
 
       // If the operands are equal or aliases.
-      if (operand1 == operand2 ||
-          aliasAnalysisResult->isMustAlias(operand1, operand2)) {
+      if (operand1 == operand2) {
         return true;
       }
     }

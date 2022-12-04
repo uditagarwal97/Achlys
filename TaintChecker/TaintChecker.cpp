@@ -722,7 +722,7 @@ bool AchlysTaintChecker::collapseConstraints(
     return false;
   }
 
-  // Got followint tainted Args
+  // Got follow int tainted Args
   for (auto i : taintedArgs) {
     dprintf(4, "[DEBUG] Tainted argument: ", to_string(i).c_str(), "\n");
   }

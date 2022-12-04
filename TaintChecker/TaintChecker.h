@@ -546,12 +546,11 @@ struct FunctionTaintSet {
 
     for (Value *val : dependVals) {
 
-      if (taintSet.find(val) != taintSet.end() &&
-         (find(taintSet[valueToBeTainted].begin(), taintSet[valueToBeTainted].end(), val)
-          == taintSet[valueToBeTainted].end()))
+      if (taintSet.find(val) != taintSet.end() && (taintSet.find(valueToBeTainted) == taintSet.end() || 
+         (taintSet[valueToBeTainted].size() != 0 &&
+         find(taintSet[valueToBeTainted].begin(), taintSet[valueToBeTainted].end(), val) == taintSet[valueToBeTainted].end())))
       {
-        depends.insert(depends.begin(), taintSet[val].begin(),
-                       taintSet[val].end());
+        depends.insert(depends.begin(), taintSet[val].begin(), taintSet[val].end());
         isTaint = true;
 
         if (taintSet[val].size() == 0)

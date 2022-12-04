@@ -403,7 +403,7 @@ void AchlysTaintChecker::analyzeLoop(BasicBlock *bb, FunctionTaintSet *taintSet,
           "\n");
   int loopUnrollCount = 0;
   while (taintSet->getCurrentLoopTaintsChanged()) {
-    taintSet->summarize(4);
+    // taintSet->summarize(4);
     ++loopUnrollCount;
     dprintf(2, "\033[0;33m[LOOP] Unroll Count: \033[0m",
             to_string(loopUnrollCount).c_str(), " for depth of ",

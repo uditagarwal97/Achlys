@@ -2,6 +2,7 @@
 #include <math.h>
 #include <fenv.h>
 #include <float.h>
+#include <stdlib.h>
 
 /**
     "觬巂 - "
@@ -37,9 +38,13 @@ int match(double* test, double* reference, int bins, double threshold) {
     return 1;
 }
 
-int main() {
-    double test[] = {100, 10, 2, 8, 7};
-    double reference[] = {200, 2, 3, 4, 5};
+int main(int argc, char** argv) {
+//    double test[] = {90, 10, 2, 8, 7};
+    double test[5];
+    double reference[] = {100, 100, 100, 100, 100};
+    for (int i = 0; i < 5; i++) {
+        test[i] = atof(argv[i+1]);
+    }
     int bins = 5;
     int threshold = 10;
     match(test, reference, bins, threshold);

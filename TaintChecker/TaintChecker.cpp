@@ -210,8 +210,8 @@ void AchlysTaintChecker::analyzeInstruction(Instruction *i,
     // Check for NaN sources.
     // Instructions like a / b can produce NaN is a and b both are tainted.
     if ((opcode == Instruction::SDiv || opcode == Instruction::FDiv) &&
-        (depGraph->isTainted(secondOperand) ||
-        depGraph->isTainted(firstOperand))) {
+        (depGraph->isTainted(secondOperand) || depGraph->isTainted(firstOperand))
+        && !isa<Constant>(firstOperand) && !isa<Constant>(secondOperand)) {
 
       taintSet->addNaNSource(bo);
       taintSet->checkAndPropagateTaint(bo, {secondOperand, firstOperand});

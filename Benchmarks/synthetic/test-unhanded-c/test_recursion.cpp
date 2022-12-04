@@ -42,6 +42,9 @@ int main(int argc, char **argv) {
   }
 
   double result = logLikelihoodRatioSum(test, reference, bin);
+  if (result > 0) {
+    cout << "Result is > 0" << endl;
+  }
 
   return 0;
 }

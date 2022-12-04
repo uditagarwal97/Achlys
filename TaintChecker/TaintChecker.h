@@ -705,6 +705,9 @@ struct AchlysTaintChecker : public ModulePass {
   // We don't propogate taint info. upon finding a constant instruction.
   bool isConstantInstruction(int opcode, Value *operand1, Value *operand2) {
 
+    if (isa<Constant>(operand1) || isa<Constant>(operand2))
+      return false;
+
     if (opcode == Instruction::Sub || opcode == Instruction::FSub ||
         opcode == Instruction::Xor || opcode == Instruction::FDiv ||
         opcode == Instruction::SDiv) {

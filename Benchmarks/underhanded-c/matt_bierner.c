@@ -31,7 +31,7 @@ int do_elements_match(double sample1, double sample2, double threshold,
 
 int match(double *test, double *reference, int bins, double threshold) {
   for (unsigned i = 0; i < bins; ++i)
-    if (!do_elements_match(test[i], reference[i], threshold, error_messager))
+    if (!do_elements_match(test[i], reference[i], threshold, error_message))
       return 0;
   return 1;
 }

@@ -8,4 +8,4 @@ This returns you a square root of 0, which is not a NaN, but can cause a NaN
 5. Ghislain Lemaur: Input from(in this case output to) a file. The default path is /tmp/log.txt. If the UID is > 10000, it creates a bug. Can achieve it by `usermod -u 10001 <USER> && chown <USER> /tmp/log.txt`
 6. Matt Bierner: All of argv[1]...argv[5] should be less than reference (100). Run as `./matt_bierner 42 15 63 93 91`  
 This might cause a Segmentation Fault instead of a NaN depending on the System  
- 
+The error in Matt Bierner's code is that instead of passing the function pointer of `error_messager`, it passes the pointer of `error_message`, which uses unicode characters that are valid x86 instructions
